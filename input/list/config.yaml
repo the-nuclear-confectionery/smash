@@ -3,17 +3,21 @@ Logging:
 
 General:
     Modus:         List
-    Time_Step_Mode: None
-    Delta_Time:    0.1
-    End_Time:      50.0
+    Time_Step_Mode: Fixed
+    Delta_Time:    1.0
+    End_Time:      1000.0
     Randomseed:    -1
-    Nevents:       10
+    Nevents:       100
 
 Output:
-    Output_Interval: 10.0
+    Output_Interval: 1000.0
     Particles:
-        Format:          ["Oscar2013"]
+        Format:          ["Oscar2013","HepMC_treeroot"]
 
+Collision_Term:
+    No_Collisions: True
+    Force_Decays_At_End: True
+    
 Modi:
     List:
         # If the build directory is not located in the smash directory anymore,
@@ -22,5 +26,5 @@ Modi:
         # with the "-c" command:
         # ./smash -i <path to config file> -c 'Modi: { List: { File_Directory: <path to file that is read in> } }
         File_Directory: "../input/list"
-        File_Prefix: "example_list"
-        Shift_Id: 0
+        Filename: "particle_list_osc.dat"
+
