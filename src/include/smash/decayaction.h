@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2015-2020
+ *    Copyright (c) 2015-2020,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -10,6 +10,7 @@
 #ifndef SRC_INCLUDE_SMASH_DECAYACTION_H_
 #define SRC_INCLUDE_SMASH_DECAYACTION_H_
 
+#include <optional>
 #include <utility>
 
 #include "action.h"
@@ -32,8 +33,11 @@ class DecayAction : public Action {
    *
    * \param[in] p The particle that should decay if the action is performed.
    * \param[in] time Time at which the action is supposed to take place
+   * \param[in] spin_interaction_type Which type of spin interaction to use
    */
-  DecayAction(const ParticleData &p, double time);
+  DecayAction(
+      const ParticleData& p, double time,
+      SpinInteractionType spin_interaction_type = SpinInteractionType::Off);
 
   /**
    * Add several new decays at once.
@@ -62,6 +66,23 @@ class DecayAction : public Action {
   std::pair<double, double> sample_masses(
       double kinetic_energy_cm) const override;
 
+  /**
+   * Sample the full 2-body phase space (masses, momenta, angles)
+   * in the center-of-mass frame for the final-state particles.
+   *
+   * \see Action::sample_2body_phasespace for the base behaviour.
+   *
+   * This overrides the base implementation to integrate with DecayAction’s
+   * channel selection and potential-aware kinematics. If sample_masses()
+   * returns NaNs (i.e., the previously chosen channel is kinematically
+   * forbidden once potentials are considered), this method sets
+   * was_2body_phase_space_sampled_with_potentials_as_valid_ to 'false' so the
+   * caller can fall back to another channel instead of throwing. Otherwise it
+   * sets it to 'true' and proceeds with momentum/angle sampling (which may use
+   * L_).
+   */
+  void sample_2body_phasespace() override;
+
   /// Return the total width of the decay process.
   double get_total_weight() const override { return total_width_; }
 
@@ -86,12 +107,72 @@ class DecayAction : public Action {
     using std::invalid_argument::invalid_argument;
   };
 
+ private:
+  /**
+   * Optional success flag for sampling outgoing particles.
+   *
+   * Set to `true` if 2-body phase-space sampling succeeded, `false` if
+   * `sample_masses()` signaled failure via NaNs (e.g., because the
+   * chosen channel turned out to be kinematically forbidden after
+   * considering potentials), or `std::nullopt` if not sampled yet.
+   *
+   * This is a **temporary workaround**: the decay channel is currently
+   * chosen without knowledge of the potentials, and kinematic failure
+   * is handled a posteriori. In the future, this should be replaced by
+   * a proper channel selection that already accounts for potential
+   * effects during the decision, avoiding the need for this flag.
+   */
+  std::optional<bool> was_2body_phase_space_sampled_with_potentials_as_valid_ =
+      std::nullopt;
+
+  /**
+   * Check for the decay Σ*→Λπ. In this case it sets the output indices.
+   *
+   * \param[in] parent Particle decaying
+   * \param[in] daughter0 First decay product
+   * \param[in] daughter1 Second decay product
+   * \param[out] lambda_idx Possible index for Λ in the decay channel
+   * \param[out] pion_idx Possible index for π in the decay channel
+   * \return true if parent is Σ* and daughters are {Λ, π}
+   */
+  static inline bool is_sigmastar_to_lambda_pion_decay(
+      const ParticleData& parent, const ParticleData& daughter0,
+      const ParticleData& daughter1, int& lambda_idx, int& pion_idx) {
+    // Fast rejections first
+    if (!parent.is_sigmastar())
+      return false;
+
+    const bool lambda0 = daughter0.pdgcode().is_Lambda();
+    const bool lambda1 = daughter1.pdgcode().is_Lambda();
+    const bool pion0 = daughter0.pdgcode().is_pion();
+    const bool pion1 = daughter1.pdgcode().is_pion();
+
+    // Check if one daughter is a lambda and the other a pion
+    if (lambda0 && pion1 && !lambda1 && !pion0) {
+      lambda_idx = 0;
+      pion_idx = 1;
+      return true;
+    } else if (lambda1 && pion0 && !lambda0 && !pion1) {
+      lambda_idx = 1;
+      pion_idx = 0;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
  protected:
   /**
    * \ingroup logging
    * Writes information about this decay action to the \p out stream.
    */
-  void format_debug_output(std::ostream &out) const override;
+  void format_debug_output(std::ostream& out) const override;
+
+  /**
+   * Sample outgoing particle types, masses and angles
+   * return success of sampling
+   */
+  bool sample_outgoing_particles();
 
   /// List of possible decays
   DecayBranchList decay_channels_;
@@ -104,6 +185,10 @@ class DecayAction : public Action {
 
   /// Angular momentum of the decay
   int L_ = 0;
+
+ private:
+  /// Spin interaction type
+  SpinInteractionType spin_interaction_type_;
 };
 
 }  // namespace smash

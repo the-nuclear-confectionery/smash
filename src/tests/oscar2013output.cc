@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2020,2022-2023
+ *    Copyright (c) 2014-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -17,6 +17,7 @@
 
 #include "setup.h"
 #include "smash/config.h"
+#include "smash/fluidizationaction.h"
 #include "smash/oscaroutput.h"
 #include "smash/outputinterface.h"
 #include "smash/particles.h"
@@ -32,6 +33,7 @@ static const int data_elements_extended = 22;
 static const std::filesystem::path testoutputpath =
     std::filesystem::absolute(SMASH_TEST_OUTPUT_PATH);
 static auto random_value = random::make_uniform_distribution(-15.0, +15.0);
+static const EventLabel event_id = {0, 0};
 
 TEST(directory_is_created) {
   std::filesystem::create_directories(testoutputpath);
@@ -84,13 +86,14 @@ static void compare_extended_particledata(
   compare_particledata(smaller_datastring, particle, id);
   const auto h = particle.get_history();
   COMPARE(std::atoi(datastring.at(12).c_str()), h.collisions_per_particle);
-  COMPARE(std::atoi(datastring.at(13).c_str()), particle.formation_time());
-  COMPARE(std::atoi(datastring.at(14).c_str()), particle.xsec_scaling_factor());
+  COMPARE_ABSOLUTE_ERROR(std::stod(datastring.at(13)),
+                         particle.formation_time(), accuracy);
+  COMPARE(std::stod(datastring.at(14)), particle.xsec_scaling_factor());
   COMPARE(std::atoi(datastring.at(15).c_str()), static_cast<int>(h.id_process));
   COMPARE(std::atoi(datastring.at(16).c_str()),
           static_cast<int>(h.process_type));
-  COMPARE_ABSOLUTE_ERROR(std::atof(datastring.at(17).c_str()),
-                         h.time_last_collision, accuracy);
+  COMPARE_ABSOLUTE_ERROR(std::stod(datastring.at(17)), h.time_last_collision,
+                         accuracy);
   COMPARE(datastring.at(18), h.p1.string());
   COMPARE(datastring.at(19), h.p2.string());
   COMPARE(std::atoi(datastring.at(20).c_str()),
@@ -110,7 +113,6 @@ TEST(full2013_format) {
   ParticleList final_particles = action->outgoing_particles();
   const double impact_parameter = 1.783;
   const bool empty_event = false;
-  const int event_id = 0;
   EventInfo event = Test::default_event_info(impact_parameter, empty_event);
 
   const std::filesystem::path outputfilename = "full_event_history.oscar";
@@ -152,7 +154,8 @@ TEST(full2013_format) {
       COMPARE(line, "# " SMASH_VERSION);
       /* Check initial particle list description line */
       std::string initial_line =
-          "# event " + std::to_string(event_id) + " in " + std::to_string(2);
+          "# event " + std::to_string(event_id.event_number) + " ensemble " +
+          std::to_string(event_id.ensemble_number) + " in " + std::to_string(2);
       std::getline(outputfile, line);
       COMPARE(line, initial_line);
       /* Check initial particle data lines item by item */
@@ -190,8 +193,10 @@ TEST(full2013_format) {
       outputfile.get();
       /* Check final particle list */
       std::getline(outputfile, line);
-      std::string final_line = "# event " + std::to_string(event_id) + " out " +
-                               std::to_string(particles.size());
+      std::string final_line =
+          "# event " + std::to_string(event_id.event_number) + " ensemble " +
+          std::to_string(event_id.ensemble_number) + " out " +
+          std::to_string(particles.size());
       COMPARE(line, final_line);
       for (ParticleData &data : particles) {
         std::array<std::string, data_elements> datastring;
@@ -204,8 +209,10 @@ TEST(full2013_format) {
       outputfile.get();
       /* Check for event end line */
       std::getline(outputfile, line);
-      std::string end_line = "# event " + std::to_string(event_id) + " end 0" +
-                             " impact   1.783 scattering_projectile_target yes";
+      std::string end_line =
+          "# event " + std::to_string(event_id.event_number) + " ensemble " +
+          std::to_string(event_id.ensemble_number) + " end 0" +
+          " impact   1.783 scattering_projectile_target yes";
       COMPARE(line, end_line);
     }
   }
@@ -223,7 +230,6 @@ TEST(final2013_format) {
   Particles particles;
   const ParticleData p1 = particles.insert(Test::smashon_random());
   const ParticleData p2 = particles.insert(Test::smashon_random());
-  const int event_id = 0;
   const double impact_parameter = 2.34;
   const bool empty_event = true;
   EventInfo event = Test::default_event_info(impact_parameter, empty_event);
@@ -276,8 +282,10 @@ TEST(final2013_format) {
       COMPARE(line, "# " SMASH_VERSION);
       /* Check final particle list */
       std::getline(outputfile, line);
-      std::string final_line = "# event " + std::to_string(event_id) + " out " +
-                               std::to_string(particles.size());
+      std::string final_line =
+          "# event " + std::to_string(event_id.event_number) + " ensemble " +
+          std::to_string(event_id.ensemble_number) + " out " +
+          std::to_string(particles.size());
       COMPARE(line, final_line);
       for (ParticleData &data : particles) {
         std::array<std::string, data_elements> datastring;
@@ -290,8 +298,10 @@ TEST(final2013_format) {
       outputfile.get();
       /* Check for event end line */
       std::getline(outputfile, line);
-      std::string end_line = "# event " + std::to_string(event_id) + " end 0" +
-                             " impact   2.340 scattering_projectile_target no";
+      std::string end_line =
+          "# event " + std::to_string(event_id.event_number) + " ensemble " +
+          std::to_string(event_id.ensemble_number) + " end 0" +
+          " impact   2.340 scattering_projectile_target no";
       COMPARE(line, end_line);
     }
   }
@@ -312,7 +322,6 @@ TEST(full_extended_oscar) {
   action->add_all_scatterings(Test::default_finder_parameters());
   action->generate_final_state();
   ParticleList final_particles = action->outgoing_particles();
-  const int event_id = 0;
   const double impact_parameter = 1.783;
   const bool empty_event = false;
   EventInfo event = Test::default_event_info(impact_parameter, empty_event);
@@ -358,7 +367,8 @@ TEST(full_extended_oscar) {
     COMPARE(line, "# " SMASH_VERSION);
     /* Check initial particle list description line */
     std::string initial_line =
-        "# event " + std::to_string(event_id) + " in " + std::to_string(2);
+        "# event " + std::to_string(event_id.event_number) + " ensemble " +
+        std::to_string(event_id.ensemble_number) + " in " + std::to_string(2);
     std::getline(outputfile, line);
     COMPARE(line, initial_line);
     /* Check initial particle data lines item by item */
@@ -396,8 +406,10 @@ TEST(full_extended_oscar) {
     outputfile.get();
     /* Check final particle list */
     std::getline(outputfile, line);
-    std::string final_line = "# event " + std::to_string(event_id) + " out " +
-                             std::to_string(particles.size());
+    std::string final_line =
+        "# event " + std::to_string(event_id.event_number) + " ensemble " +
+        std::to_string(event_id.ensemble_number) + " out " +
+        std::to_string(particles.size());
     COMPARE(line, final_line);
     for (ParticleData &data : particles) {
       std::array<std::string, data_elements_extended> datastring;
@@ -410,7 +422,9 @@ TEST(full_extended_oscar) {
     outputfile.get();
     /* Check for event end line */
     std::getline(outputfile, line);
-    std::string end_line = "# event " + std::to_string(event_id) + " end 0" +
+    std::string end_line = "# event " + std::to_string(event_id.event_number) +
+                           " ensemble " +
+                           std::to_string(event_id.ensemble_number) + " end 0" +
                            " impact   1.783 scattering_projectile_target yes";
     COMPARE(line, end_line);
   }
@@ -424,10 +438,9 @@ TEST(initial_conditions_2013_format) {
   p1.set_4position(FourVector(2.3, 1.35722, 1.42223, 1.5));  // tau = 1.74356
 
   // Create action ("hypersurface crossing")
-  ActionPtr action = std::make_unique<HypersurfacecrossingAction>(p1, p1, 0.0);
+  ActionPtr action = std::make_unique<FluidizationAction>(p1, p1, 0.0);
   action->generate_final_state();
 
-  const int event_id = 0;
   const bool empty_event = false;
   const double impact_parameter = 1.783;
   EventInfo event = Test::default_event_info(impact_parameter, empty_event);
@@ -470,7 +483,8 @@ TEST(initial_conditions_2013_format) {
       COMPARE(line, "# " SMASH_VERSION);
       /* Check initial particle list description line */
       std::string initial_line =
-          "# event " + std::to_string(event_id) + " in " + std::to_string(1);
+          "# event " + std::to_string(event_id.event_number) + " ensemble " +
+          std::to_string(event_id.ensemble_number) + " start";
       std::getline(outputfile, line);
       COMPARE(line, initial_line);
       /* Check initial particle data lines item by item */
@@ -487,8 +501,9 @@ TEST(initial_conditions_2013_format) {
       outputfile.get();
       /* Check for event end line */
       std::getline(outputfile, line);
-      std::string end_line = "# event " + std::to_string(event_id) + " end 0" +
-                             " impact   1.783 scattering_projectile_target yes";
+      std::string end_line =
+          "# event " + std::to_string(event_id.event_number) + " ensemble " +
+          std::to_string(event_id.ensemble_number) + " end";
       COMPARE(line, end_line);
     }
   }

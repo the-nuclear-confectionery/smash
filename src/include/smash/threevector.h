@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2015,2017-2020,2022
+ *    Copyright (c) 2014-2015,2017-2020,2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -43,6 +43,15 @@ class ThreeVector {
    */
   ThreeVector(double y1, double y2, double y3) : x_({y1, y2, y3}) {}
 
+  /**
+   * Constructor for ThreeVector that takes an array of 3 doubles to set up a
+   * ThreeVector with desired values for the components
+   *
+   * \param[in] arr the 3-component array
+   */
+  explicit ThreeVector(std::array<double, 3> arr)
+      : x_({arr[0], arr[1], arr[2]}) {}
+
   /// access the component at offset \p i.
   double &operator[](std::size_t i) { return x_[i]; }
   /// const overload of the above.
@@ -76,11 +85,11 @@ class ThreeVector {
    * about the rotated z-axis. To reverse the rotation one has to
    * therefore exchange phi and psi and use the negative values for all angles.
    * \param[in] phi angle by which the first rotation is done about the z-axis.
-   *        Range: [0,2&pi]
+   *        Range: \f$[0,2\pi]\f$
    * \param[in] theta angle by which the second rotation is done
-   *        about the rotated x-axis. Range: [0,&pi]
+   *        about the rotated x-axis. Range: \f$[0,\pi]\f$
    * \param[in] psi angle by which the third rotation is done
-   *        about the rotated z-axis. Range: [0,2&pi]
+   *        about the rotated z-axis. Range: \f$[0,2\pi]\f$
    *
    * Euler angles are used to make rotation of several (different) position
    * vectors belonging to one rigid body easy. A ThreeVector could be rotated

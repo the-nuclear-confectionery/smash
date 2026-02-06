@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -17,7 +17,6 @@
 #include "smash/particles.h"
 
 namespace smash {
-static constexpr int LHyperSurfaceCrossing = LogArea::HyperSurfaceCrossing::id;
 
 const int RootOutput::max_buffer_size_ = 500000;
 
@@ -26,9 +25,9 @@ const int RootOutput::max_buffer_size_ = 500000;
  * SMASH ROOT output is a fast and disk-space efficient, but not human-readable
  * output. It is a custom format making information about the SMASH calculation
  * accessible with ROOT, mostly mirroring the information of the
- * \ref doxypage_output_oscar formats. This output is distinct from the
- * standarized \ref doxypage_output_hepmc that is also available in ROOT format
- * and more widely adopted.
+ * \ref doxypage_output_oscar "OSCAR output" formats. This output is distinct
+ * from the standarized \ref doxypage_output_hepmc "HepMC output" that is also
+ * available in a ROOT format and more widely adopted.
  *
  * SMASH ROOT output files can be viewed using ROOT's TBrowser. One can also
  * access them using ROOT functions. The full memory structure of the ROOT
@@ -39,39 +38,44 @@ const int RootOutput::max_buffer_size_ = 500000;
  *
  * Producing ROOT output requires ROOT installed (see http://root.cern.ch).
  *
- * Depending on configuration (see \ref doxypage_output) SMASH can
- * produces up to two ROOT files per run: \c Particles.root and \c
- * Collisions.root. These files contain a TTree called \c particles and a TTree
- * called \c collisions. The \c particles tree contains information about the
- * parameters of the run (such as the number of testparticles and event number),
- * information relating to individual particles (such as their position or
- * charge), and information about bulk observables in the system (kinetic
+ * Depending on configuration (see \ref doxypage_output "Output"), SMASH can
+ * produce two ROOT files per run: \c Particles.root and \c Collisions.root.
+ * These files contain a TTree called \c particles and a TTree called
+ * \c collisions, respectively. The \c particles tree contains information about
+ * the parameters of the run (such as the number of testparticles and event
+ * number), information relating to individual particles (such as their position
+ * or charge), and information about bulk observables in the system (kinetic
  * energy, mean field energy, and total energy). The \c collisions tree contains
  * information about each collision, such as number of incoming and outgoing
- * particles. It also has the full information about the incoming and outgoing
+ * particles. It also has the full information about the incoming and outgoing\
  * particles of each collision.
  *
  * In case that the ROOT format is used for dilepton output
- * (see \ref doxypage_output_dileptons), the ROOT file is called \c
- * Dileptons.root and only contains a \c collisions tree with all the dilepton
- * decays.
+ * (see \ref doxypage_output_dileptons "Dileption output"), the ROOT file is
+ * called \c Dileptons.root and only contains a \c collisions tree with all the
+ * dilepton decays.
  *
- * Every physical quantity corresponds to a separate TBranch.
- * One entry in the \c particles TTree is:
+ * Output is divided into ROOT entries (output blocks). In a ROOT entry,
+ * information is stored in TBranches, where every physical quantity corresponds
+ * to a separate TBranch. One entry (output block) in the \c particles TTree is
+ * comprised of:
  * \code
- * ev tcounter npart test_p modus_l current_t impact_b empty_event
- * pdgcode[npart] charge[npart] t[npart] x[npart] y[npart] z[npart] p0[npart]
+ * ev ens tcounter npart test_p modus_l current_t impact_b empty_event
+ * id[npart] pdgcode[npart] charge[npart] formation_time[npart]
+ * time_last_collision[npart] t[npart] x[npart] y[npart] z[npart] p0[npart]
  * px[npart] py[npart] pz[npart] E_kinetic_tot E_fields_tot E_tot
  * \endcode
- * The maximal
- * number of particles in one entry is limited to 500000. This is done to limit
- * the buffer size needed for ROOT output. If the number of particles in one
- * block exceeds 500000, then they are written in separate blocks with the same
- * \c tcounter and \c ev. The fields have the following meaning:
+ * All particles in a ROOT entry (output block) are at the same time and in the
+ * same event. The maximal number of particles in one entry is limited to
+ * 500000. This is done to limit the buffer size needed for ROOT output. If the
+ * number of particles in one ROOT entry (output block) exceeds 500000, then
+ * they are written in separate entries with the same \c tcounter and \c ev.
  *
+ * Each ROOT entry (output block) contains TBranches with overall information
+ * about the event and the output block:
  * \li \c ev is event number
- * \li \c tcounter is number of output block in a given event in terms of
- * OSCAR
+ * \li \c ens is ensemble number
+ * \li \c tcounter is number of the output block in a given event
  * \li \c npart is number of particles in the block
  * \li \c test_p is number of testparticles per particle
  * \li \c modus_l is modus length
@@ -79,28 +83,58 @@ const int RootOutput::max_buffer_size_ = 500000;
  * \li \c impact_b is the impact parameter of the event
  * \li \c empty_event indicates whether the projectile did not interact with the
  * target
- * \li \c pdgcode is PDG id array
- * \li \c charge is the electric charge array
- * \li \c p0, \c px, \c py, \c pz are 4-momenta arrays
- * \li \c t, \c x, \c y, \c z are position arrays
+ *
+ * Then, each ROOT entry (output block) contains information about all particles
+ * in the block. Particle characteristics such as position or charge are stored
+ * in arrays which belong to separate TBranches. There are TBranches containing
+ * arrays with information on the following quantities:
+ * \li \c id is unique integer identifier of the particle
+ * \li \c pdgcode is PDG id
+ * \li \c charge is the electric charge
+ * \li \c formation_time is particle formation time
+ * \li \c time_last_collision is time of the last collision
+ * \li \c p0, \c px, \c py, \c pz are components of particle 4-momentum
+ * \li \c t, \c x, \c y, \c z are components of particle 4-position
+ *
+ * Finally, each ROOT entry (output block) contains information about some of
+ * the bulk properties of the system:
  * \li \c E_kinetic_tot is total kinetic energy in the system
  * \li \c E_fields_tot is total mean field energy * test_p
- * \li \c E_total is the sum of E_kinetic_tot and E_fields_tot
+ * \li \c E_tot is the sum of E_kinetic_tot and E_fields_tot
  *
- * In case of extended output (see \ref input_output_content_specific_) more
- * fields are added. Their description is the same that in case of OSCAR
- * format, see \ref extended_output_format_.
+ * In case of extended output
+ * (see \ref input_output_content_specific_ "extended output") more fields are
+ * added. Their description is the same that in case of OSCAR format, see
+ * \ref extended_output_format_ "extended OSCAR format".
+ * \note In contrast to the OSCAR format, the ROOT output includes
+ * \c formation_time and \c time_last_collision in the standard (not extended)
+ * output.
  *
- * The entries in the \c collisions tree are organized in the same way, but
- * a few additional fields are present:
- * \li \c nin and \c nout are added to characterize number of incoming and
- *     outgoing particles in the reaction, with nin + nout = npart.
- * \li \c weight is an action weight, whose meaning depends on the type of
- *     action: For collisions it is the total cross section, for decays it is
- *     the total decay width and for dilepton decays it is the shining weight.
+ * If "Collisions:" section is present in the config file, then in addition to a
+ * file Particles.root with particles TTree, another file Collisions.root is
+ * created. Collisions.root contains information about each collision, written
+ * as one leaf. Similarly to Particles.root, this includes global information
+ * about the event:
+ * \code
+ * ev ens
+ * \endcode
+ * and information about particles participating in a collision:
+ * \code
+ * id[npart] pdgcode[npart] charge[npart] formation_time[npart]
+ * time_last_collision[npart] p0[npart] px[npart] py[npart] pz[npart] t[npart]
+ * x[npart] y[npart] z[npart]
+ * \endcode
+ * where all arrays are now of dimension nin+nout = npart.
+ * Beyond these, Collisions.root contains a few additional fields:
+ * \li \c nin is the number of incoming particles in the reaction,
+ * \li \c nout is the number of outgoing particles in the reaction,
+ * \li \c wgt is an action weight, whose meaning depends on the type of action:
+ * for collisions it is the total cross section, for decays it is the total
+ * decay width, and for dilepton decays it is the shining weight,
+ * \li \c par_wgt is partial weight of the collision.
  *
- * Currently writing initial and final configuration to collisions tree is
- * not supported.
+ * Currently writing initial and final configurations to collisions tree is not
+ * supported.
  *
  * See also \ref doxypage_output_collisions_box_modus.
  *
@@ -238,7 +272,6 @@ RootOutput::RootOutput(const std::filesystem::path &path,
       write_particles_(name == "Particles"),
       write_initial_conditions_(name == "SMASH_IC"),
       particles_only_final_(out_par.part_only_final),
-      autosave_frequency_(1000),
       part_extended_(out_par.part_extended),
       coll_extended_(out_par.coll_extended),
       ic_extended_(out_par.ic_extended) {
@@ -254,6 +287,7 @@ void RootOutput::init_trees() {
     particles_tree_ = new TTree("particles", "particles");
 
     particles_tree_->Branch("ev", &ev_, "ev/I");
+    particles_tree_->Branch("ens", &ens_, "ens/I");
     particles_tree_->Branch("tcounter", &tcounter_, "tcounter/I");
     particles_tree_->Branch("npart", &npart_, "npart/I");
     particles_tree_->Branch("test_p", &test_p_, "test_p/I");
@@ -262,8 +296,13 @@ void RootOutput::init_trees() {
     particles_tree_->Branch("impact_b", &impact_b_, "impact_b/D");
     particles_tree_->Branch("empty_event", &empty_event_, "empty_event/O");
 
+    particles_tree_->Branch("id", &id_[0], "id[npart]/I");
     particles_tree_->Branch("pdgcode", &pdgcode_[0], "pdgcode[npart]/I");
     particles_tree_->Branch("charge", &charge_[0], "charge[npart]/I");
+    particles_tree_->Branch("formation_time", &formation_time_[0],
+                            "formation_time[npart]/D");
+    particles_tree_->Branch("time_last_collision", &time_last_collision_[0],
+                            "time_last_collision[npart]/D");
 
     particles_tree_->Branch("p0", &p0_[0], "p0[npart]/D");
     particles_tree_->Branch("px", &px_[0], "px[npart]/D");
@@ -282,15 +321,11 @@ void RootOutput::init_trees() {
 
     if (part_extended_ || ic_extended_) {
       particles_tree_->Branch("ncoll", &coll_per_part_[0], "ncoll[npart]/I");
-      particles_tree_->Branch("form_time", &formation_time_[0],
-                              "form_time[npart]/D");
       particles_tree_->Branch("xsecfac", &xsec_factor_[0], "xsecfac[npart]/D");
       particles_tree_->Branch("proc_id_origin", &proc_id_origin_[0],
                               "proc_id_origin[npart]/I");
       particles_tree_->Branch("proc_type_origin", &proc_type_origin_[0],
                               "proc_type_origin[npart]/I");
-      particles_tree_->Branch("time_last_coll", &time_last_coll_[0],
-                              "time_last_coll[npart]/D");
       particles_tree_->Branch("pdg_mother1", &pdg_mother1_[0],
                               "pdg_mother1[npart]/I");
       particles_tree_->Branch("pdg_mother2", &pdg_mother2_[0],
@@ -305,15 +340,22 @@ void RootOutput::init_trees() {
   if (write_collisions_) {
     collisions_tree_ = new TTree("collisions", "collisions");
 
+    collisions_tree_->Branch("ev", &ev_, "ev/I");
+    collisions_tree_->Branch("ens", &ens_, "ens/I");
+
     collisions_tree_->Branch("nin", &nin_, "nin/I");
     collisions_tree_->Branch("nout", &nout_, "nout/I");
     collisions_tree_->Branch("npart", &npart_, "npart/I");
-    collisions_tree_->Branch("ev", &ev_, "ev/I");
     collisions_tree_->Branch("weight", &wgt_, "weight/D");
     collisions_tree_->Branch("partial_weight", &par_wgt_, "partial_weight/D");
 
+    collisions_tree_->Branch("id", &id_[0], "id[npart]/I");
     collisions_tree_->Branch("pdgcode", &pdgcode_[0], "pdgcode[npart]/I");
     collisions_tree_->Branch("charge", &charge_[0], "charge[npart]/I");
+    collisions_tree_->Branch("formation_time", &formation_time_[0],
+                             "formation_time[npart]/D");
+    collisions_tree_->Branch("time_last_collision", &time_last_collision_[0],
+                             "time_last_collision[npart]/D");
 
     collisions_tree_->Branch("p0", &p0_[0], "p0[npart]/D");
     collisions_tree_->Branch("px", &px_[0], "px[npart]/D");
@@ -327,15 +369,11 @@ void RootOutput::init_trees() {
 
     if (coll_extended_) {
       collisions_tree_->Branch("ncoll", &coll_per_part_[0], "ncoll[npart]/I");
-      collisions_tree_->Branch("form_time", &formation_time_[0],
-                               "form_time[npart]/D");
       collisions_tree_->Branch("xsecfac", &xsec_factor_[0], "xsecfac[npart]/D");
       collisions_tree_->Branch("proc_id_origin", &proc_id_origin_[0],
                                "proc_id_origin[npart]/I");
       collisions_tree_->Branch("proc_type_origin", &proc_type_origin_[0],
                                "proc_type_origin[npart]/I");
-      collisions_tree_->Branch("time_last_coll", &time_last_coll_[0],
-                               "time_last_coll[npart]/D");
       collisions_tree_->Branch("pdg_mother1", &pdg_mother1_[0],
                                "pdg_mother1[npart]/I");
       collisions_tree_->Branch("pdg_mother2", &pdg_mother2_[0],
@@ -360,9 +398,11 @@ RootOutput::~RootOutput() {
 }
 
 void RootOutput::at_eventstart(const Particles &particles,
-                               const int event_number, const EventInfo &event) {
-  // save event number
-  current_event_ = event_number;
+                               const EventLabel &event_label,
+                               const EventInfo &event) {
+  // save event and ensemble numbers
+  current_event_ = event_label.event_number;
+  current_ensemble_ = event_label.ensemble_number;
 
   modus_l_ = event.modus_length;
   test_p_ = event.test_particles;
@@ -384,7 +424,9 @@ void RootOutput::at_eventstart(const Particles &particles,
 void RootOutput::at_intermediate_time(const Particles &particles,
                                       const std::unique_ptr<Clock> &,
                                       const DensityParameters &,
+                                      const EventLabel &event_label,
                                       const EventInfo &event) {
+  current_ensemble_ = event_label.ensemble_number;
   modus_l_ = event.modus_length;
   test_p_ = event.test_particles;
   current_t_ = event.current_time;
@@ -399,21 +441,34 @@ void RootOutput::at_intermediate_time(const Particles &particles,
 }
 
 void RootOutput::at_eventend(const Particles &particles,
-                             const int /*event_number*/,
+                             const EventLabel &event_label,
                              const EventInfo &event) {
-  modus_l_ = event.modus_length;
+  current_ensemble_ = event_label.ensemble_number;
   test_p_ = event.test_particles;
+  modus_l_ = event.modus_length;
   current_t_ = event.current_time;
+  impact_b_ = event.impact_parameter;
+  empty_event_ = event.empty_event;
+
   E_kinetic_tot_ = event.total_kinetic_energy;
   E_fields_tot_ = event.total_mean_field_energy;
   E_tot_ = event.total_energy;
 
-  impact_b_ = event.impact_parameter;
-  empty_event_ = event.empty_event;
   if (write_particles_ &&
       !(event.empty_event &&
         particles_only_final_ == OutputOnlyFinal::IfNotEmpty)) {
     particles_to_tree(particles);
+  }
+  /* Calculate the autosave frequency to be used. In case multiple ensembles are
+   * used this has to be at least 1, so set it to 1 if the number of ensembles
+   * is larger than the initial value of the autosave frequency. The evaluation
+   * of the actual frequency to be used has to be done only once, i.e. when the
+   * autosave_frequency_ has still its meaningless initial negative value. */
+  if (autosave_frequency_ < 0) {
+    autosave_frequency_ = 1000 / event.n_ensembles;
+    if (autosave_frequency_ == 0) {
+      autosave_frequency_ = 1;
+    }
   }
   /* Forced regular dump from operational memory to disk. Very demanding!
    * If program crashes written data will NOT be lost. */
@@ -423,17 +478,6 @@ void RootOutput::at_eventend(const Particles &particles,
     }
     if (write_collisions_) {
       collisions_tree_->AutoSave("SaveSelf");
-    }
-  }
-
-  if (write_initial_conditions_) {
-    // If the runtime is too short some particles might not yet have
-    // reached the hypersurface. Warning is printed.
-    if (particles.size() != 0 && !event.impose_kinematic_cut_for_SMASH_IC) {
-      logg[LHyperSurfaceCrossing].warn(
-          "End time might be too small for initial conditions output. "
-          "Hypersurface has not yet been crossed by ",
-          particles.size(), " particle(s).");
     }
   }
 }
@@ -446,7 +490,8 @@ void RootOutput::at_interaction(const Action &action,
   }
 
   if (write_initial_conditions_ &&
-      action.get_type() == ProcessType::HyperSurfaceCrossing) {
+      (action.get_type() == ProcessType::Fluidization ||
+       action.get_type() == ProcessType::FluidizationNoRemoval)) {
     particles_to_tree(action.incoming_particles());
   }
 }
@@ -456,6 +501,7 @@ void RootOutput::particles_to_tree(T &particles) {
   int i = 0;
 
   ev_ = current_event_;
+  ens_ = current_ensemble_;
   tcounter_ = output_counter_;
   bool exceeded_buffer_message = true;
 
@@ -478,8 +524,11 @@ void RootOutput::particles_to_tree(T &particles) {
       i = 0;
       particles_tree_->Fill();
     } else {
+      id_[i] = p.id();
       pdgcode_[i] = p.pdgcode().get_decimal();
       charge_[i] = p.type().charge();
+      formation_time_[i] = p.formation_time();
+      time_last_collision_[i] = p.get_history().time_last_collision;
 
       p0_[i] = p.momentum().x0();
       px_[i] = p.momentum().x1();
@@ -493,10 +542,8 @@ void RootOutput::particles_to_tree(T &particles) {
 
       if (part_extended_ || ic_extended_) {
         const auto h = p.get_history();
-        formation_time_[i] = p.formation_time();
-        xsec_factor_[i] = p.xsec_scaling_factor();
-        time_last_coll_[i] = h.time_last_collision;
         coll_per_part_[i] = h.collisions_per_particle;
+        xsec_factor_[i] = p.xsec_scaling_factor();
         proc_id_origin_[i] = h.id_process;
         proc_type_origin_[i] = static_cast<int>(h.process_type);
         pdg_mother1_[i] = h.p1.get_decimal();
@@ -520,6 +567,7 @@ void RootOutput::collisions_to_tree(const ParticleList &incoming,
                                     const double weight,
                                     const double partial_weight) {
   ev_ = current_event_;
+  ens_ = current_ensemble_;
   nin_ = incoming.size();
   nout_ = outgoing.size();
   npart_ = nin_ + nout_;
@@ -529,14 +577,17 @@ void RootOutput::collisions_to_tree(const ParticleList &incoming,
   int i = 0;
 
   /* It is assumed that nin + nout < max_buffer_size_
-   * This is true for any possible reaction for current buffer size: 10000
+   * This is true for any possible reaction for current buffer size
    * But if one wants initial/final particles written to collisions
    * then implementation should be updated. */
 
   for (const ParticleList &plist : {incoming, outgoing}) {
     for (const auto &p : plist) {
+      id_[i] = p.id();
       pdgcode_[i] = p.pdgcode().get_decimal();
       charge_[i] = p.type().charge();
+      formation_time_[i] = p.formation_time();
+      time_last_collision_[i] = p.get_history().time_last_collision;
 
       p0_[i] = p.momentum().x0();
       px_[i] = p.momentum().x1();
@@ -550,15 +601,14 @@ void RootOutput::collisions_to_tree(const ParticleList &incoming,
 
       if (coll_extended_) {
         const auto h = p.get_history();
-        formation_time_[i] = p.formation_time();
-        xsec_factor_[i] = p.xsec_scaling_factor();
-        time_last_coll_[i] = h.time_last_collision;
         coll_per_part_[i] = h.collisions_per_particle;
+        xsec_factor_[i] = p.xsec_scaling_factor();
         proc_id_origin_[i] = h.id_process;
         proc_type_origin_[i] = static_cast<int>(h.process_type);
         pdg_mother1_[i] = h.p1.get_decimal();
         pdg_mother2_[i] = h.p2.get_decimal();
         baryon_number_[i] = p.type().baryon_number();
+        strangeness_[i] = p.type().strangeness();
       }
 
       i++;

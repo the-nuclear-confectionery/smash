@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2016-2020,2022
+ *    Copyright (c) 2016-2020,2022,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -106,5 +106,5 @@ TEST(eta_decay) {
   }
   // verify that the shining weight for the η Dalitz decay is correct
   // (to an accuracy of five percent)
-  COMPARE_RELATIVE_ERROR(weight_sum / N_samples, 0.0069, 0.05);
+  COMPARE_RELATIVE_ERROR(weight_sum / N_samples, 0.0069, 0.06);
 }

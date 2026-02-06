@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2015-2020,2022
+ *    Copyright (c) 2015-2020,2022,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -43,6 +43,13 @@ TEST(collision_order) {
   auto particle_c = create_smashon_particle(2);
   auto particle_d = create_smashon_particle(3);
   auto particle_e = create_smashon_particle(4);
+
+  // set formation times
+  particle_a.set_formation_time(0.);
+  particle_b.set_formation_time(0.);
+  particle_c.set_formation_time(0.);
+  particle_d.set_formation_time(0.);
+  particle_e.set_formation_time(0.);
 
   // set positions
   // particle a is set such that it will miss particles b and c by 0.1 fm
@@ -260,6 +267,7 @@ TEST(increasing_scaling_factors) {
   p_b.set_4momentum(FourVector(energy, -energy * v, 0, 0));
   // Set one particle to be half formed at time of collision.
   p_a.set_slow_formation_times(time, time + 2. * delta_t_coll);
+  p_b.set_formation_time(time);
   p_a.set_cross_section_scaling_factor(0.);
   // Set up scatter actions finder
   Configuration config = create_configuration_for_tests(xsec);

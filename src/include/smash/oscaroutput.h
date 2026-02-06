@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2020,2022
+ *    Copyright (c) 2014-2020,2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -12,11 +12,13 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "file.h"
 #include "forwarddeclarations.h"
 #include "outputinterface.h"
 #include "outputparameters.h"
+#include "smash/outputformatter.h"
 
 namespace smash {
 
@@ -29,7 +31,8 @@ namespace smash {
 enum OscarOutputFormat {
   OscarFormat2013,
   OscarFormat2013Extended,
-  OscarFormat1999
+  OscarFormat1999,
+  ASCII
 };
 
 /**
@@ -69,26 +72,28 @@ class OscarOutput : public OutputInterface {
    *
    * \param[in] path Output path.
    * \param[in] name Name of the ouput.
+   * \param[in] quantities List of quantities present in the output file.
    */
-  OscarOutput(const std::filesystem::path &path, const std::string &name);
+  OscarOutput(const std::filesystem::path &path, const std::string &name,
+              const std::vector<std::string> quantities = {});
 
   /**
    * Writes the initial particle information of an event to the oscar output.
    * \param[in] particles Current list of all particles.
-   * \param[in] event_number Number of event.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventstart(const Particles &particles, const int event_number,
+  void at_eventstart(const Particles &particles, const EventLabel &event_label,
                      const EventInfo &event) override;
 
   /**
    * Writes the final particle information of an event to the oscar output.
    * \param[in] particles Current list of particles.
-   * \param[in] event_number Number of event.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventend(const Particles &particles, const int event_number,
-                   const EventInfo &) override;
+  void at_eventend(const Particles &particles, const EventLabel &event_label,
+                   const EventInfo &event) override;
 
   /**
    * Writes a interaction prefix line and a line for every incoming and
@@ -104,11 +109,13 @@ class OscarOutput : public OutputInterface {
    * \param[in] particles Current list of particles.
    * \param[in] clock Unused, needed since inherited.
    * \param[in] dens_param Unused, needed since inherited.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
   void at_intermediate_time(const Particles &particles,
                             const std::unique_ptr<Clock> &clock,
                             const DensityParameters &dens_param,
+                            const EventLabel &event_label,
                             const EventInfo &event) override;
 
  private:
@@ -119,26 +126,31 @@ class OscarOutput : public OutputInterface {
   void write_particledata(const ParticleData &data);
 
   /**
+   * Write a ToASCII::type buffer to the output.
+   * \param[in] buffer Buffer containing the ASCII-formatted data to be written
+   */
+  void write(const ToASCII::type &buffer);
+
+  /**
    * Write the particle information of a list of particles to the output.
    * One line per particle.
    * \param[in] particles List of particles to be written
    */
   void write(const Particles &particles);
 
-  /// Keep track of event number.
-  int current_event_ = 0;
-
   /// Full filepath of the output file.
   RenamingFilePtr file_;
+
+  /// Formatter of the output
+  OutputFormatter<ToASCII> formatter_;
 };
 
 /**
  * \return A new OscarOutput object using information from \p config to
  * select the correct implementation.
  *
- * \param[in] format A string: "Oscar2013" or "Oscar1999"
- * \param[in] content A string: "Particles", "Collisions", "Photons"
-               or "Dileptons".
+ * \param[in] format The output format as string, e.g. \c "Oscar2013"
+ * \param[in] content The output content as string, e.g. \c "Particles"
  * \param[in] path The path to the output directory where the file(s) will be
  *             placed.
  * \param[in] out_par A structure containing parameters of the output, in

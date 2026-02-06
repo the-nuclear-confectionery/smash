@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2017-2020,2022
+ *    Copyright (c) 2017-2020,2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -97,7 +97,7 @@ void StringProcess::common_setup_pythia(Pythia8::Pythia *pythia_in,
   /* choose minimum transverse momentum scale
    * involved in partonic interactions */
   pythia_in->readString("MultipartonInteractions:pTmin = 1.5");
-  pythia_in->readString("MultipartonInteractions:nSample = 10000");
+  pythia_in->readString("MultipartonInteractions:nSample = 100000");
   // transverse momentum spread in string fragmentation
   pythia_in->readString("StringPT:sigma = " + std::to_string(string_sigma_T));
   // diquark suppression factor in string fragmentation
@@ -306,6 +306,7 @@ bool StringProcess::next_SDiff(bool is_AB_to_AX) {
     NpartString_[0] = 0;
     return false;
   }
+
   NpartString_[0] =
       append_final_state(new_intermediate_particles, ustrXcom, evec);
 
@@ -379,6 +380,7 @@ bool StringProcess::make_final_state_2strings(
       NpartString_[i] = 0;
       return false;
     }
+
     NpartString_[i] =
         append_final_state(new_intermediate_particles, ustr_com[i], evec);
     assert(nfrag == NpartString_[i]);

@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2015-2022
+ *    Copyright (c) 2015-2022,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -344,12 +344,13 @@ double ThreeBodyDecayDilepton::diff_width(double m_par, double m_l,
   }
 
   // abbreviations
+  const double m_l_sqr = m_l * m_l;
   const double m_dil_sqr = m_dil * m_dil;
   const double m_par_sqr = m_par * m_par;
   const double m_par_cubed = m_par * m_par * m_par;
   const double m_other_sqr = m_other * m_other;
-  const double ph_sp_factor = std::sqrt(1. - 4. * m_l * m_l / m_dil_sqr) *
-                              (1. + 2. * m_l * m_l / m_dil_sqr);
+  const double ph_sp_factor = std::sqrt(1. - 4. * m_l_sqr / m_dil_sqr) *
+                              (1. + 2. * m_l_sqr / m_dil_sqr);
 
   PdgCode pdg = t->pdgcode();
   if (pdg.is_meson()) {

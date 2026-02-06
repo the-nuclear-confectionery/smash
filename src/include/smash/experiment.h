@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2013-2024
+ *    Copyright (c) 2013-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -21,12 +21,16 @@
 #include "chrono.h"
 #include "decayactionsfinder.h"
 #include "decayactionsfinderdilepton.h"
+#include "dynamicfluidfinder.h"
 #include "energymomentumtensor.h"
 #include "fields.h"
+#include "fluidizationaction.h"
 #include "fourvector.h"
 #include "grandcan_thermalizer.h"
 #include "grid.h"
-#include "hypersurfacecrossingaction.h"
+#include "hypersurfacecrossingfinder.h"
+#include "icparameters.h"
+#include "numeric_cast.h"
 #include "outputparameters.h"
 #include "pauliblocking.h"
 #include "potential_globals.h"
@@ -245,7 +249,7 @@ class Experiment : public ExperimentBase {
    *
    * \throws runtime_error if found actions cannot be performed
    */
-  void do_final_decays();
+  void do_final_interactions();
 
   /// Output at the end of an event
   void final_output();
@@ -546,7 +550,7 @@ class Experiment : public ExperimentBase {
    * nevents_ is number of times single phenomenon (particle
    * or nucleus-nucleus collision) will be simulated.
    */
-  const int nevents_ = 0;
+  int nevents_ = 0;
 
   /**
    * The number of ensembles, in which interactions take place, to be
@@ -609,8 +613,14 @@ class Experiment : public ExperimentBase {
   /// This indicates whether bremsstrahlung is switched on.
   const bool bremsstrahlung_switch_;
 
-  /// This indicates whether the IC output is enabled.
-  const bool IC_output_switch_;
+  /**
+   * This indicates whether the experiment will be used as initial condition for
+   * hydrodynamics. Currently only the Collider modus can achieve this.
+   */
+  const bool IC_switch_;
+
+  /// This indicates if the IC is dynamic.
+  const bool IC_dynamic_;
 
   /// This indicates whether to use time steps.
   const TimeStepMode time_step_mode_;
@@ -721,8 +731,30 @@ void Experiment<Modus>::create_output(const std::string &format,
                                       const std::string &content,
                                       const std::filesystem::path &output_path,
                                       const OutputParameters &out_par) {
-  logg[LExperiment].info() << "Adding output " << content << " of format "
-                           << format << std::endl;
+  // Disable output which do not properly work with multiple ensembles
+  if (ensembles_.size() > 1) {
+    auto abort_because_of = [](const std::string &s) {
+      throw std::invalid_argument(
+          s + " output is not available with multiple parallel ensembles.");
+    };
+    if (content == "Initial_Conditions") {
+      abort_because_of("Initial_Conditions");
+    }
+    if ((format == "HepMC") || (format == "HepMC_asciiv3") ||
+        (format == "HepMC_treeroot")) {
+      abort_because_of("HepMC");
+    }
+    if (content == "Rivet") {
+      abort_because_of("Rivet");
+    }
+    if (content == "Collisions") {
+      logg[LExperiment].warn(
+          "Information coming from different ensembles in 'Collisions' output "
+          "is not distinguishable.\nSuch an output with multiple parallel "
+          "ensembles should only be used if later in the data analysis\nit is "
+          "not necessary to trace back which data belongs to which ensemble.");
+    }
+  }
 
   if (format == "VTK" && content == "Particles") {
     outputs_.emplace_back(
@@ -740,19 +772,19 @@ void Experiment<Modus>::create_output(const std::string &format,
     logg[LExperiment].error(
         "Root output requested, but Root support not compiled in");
 #endif
-  } else if (format == "Binary") {
-    if (content == "Collisions" || content == "Dileptons" ||
-        content == "Photons") {
-      outputs_.emplace_back(std::make_unique<BinaryOutputCollisions>(
-          output_path, content, out_par));
-    } else if (content == "Particles") {
-      outputs_.emplace_back(std::make_unique<BinaryOutputParticles>(
-          output_path, content, out_par));
-    } else if (content == "Initial_Conditions") {
-      outputs_.emplace_back(std::make_unique<BinaryOutputInitialConditions>(
-          output_path, content, out_par));
-    }
+  } else if ((format == "Binary" || format == "Oscar2013_bin") &&
+             (content == "Collisions" || content == "Particles" ||
+              content == "Dileptons" || content == "Photons" ||
+              content == "Initial_Conditions")) {
+    outputs_.emplace_back(
+        create_binary_output(format, content, output_path, out_par));
   } else if (format == "Oscar1999" || format == "Oscar2013") {
+    outputs_.emplace_back(
+        create_oscar_output(format, content, output_path, out_par));
+  } else if (format == "ASCII" &&
+             (content == "Particles" || content == "Collisions" ||
+              content == "Dileptons" || content == "Photons" ||
+              content == "Initial_Conditions")) {
     outputs_.emplace_back(
         create_oscar_output(format, content, output_path, out_par));
   } else if (content == "Thermodynamics" && format == "ASCII") {
@@ -768,9 +800,14 @@ void Experiment<Modus>::create_output(const std::string &format,
     printout_lattice_td_ = true;
     outputs_.emplace_back(
         std::make_unique<VtkOutput>(output_path, content, out_par));
-  } else if (content == "Initial_Conditions" && format == "ASCII") {
+  } else if (content == "Initial_Conditions" && format == "For_vHLLE") {
+    if (IC_dynamic_) {
+      throw std::invalid_argument(
+          "Dynamic initial conditions are only available in Oscar2013 and "
+          "Binary formats.");
+    }
     outputs_.emplace_back(
-        std::make_unique<ICOutput>(output_path, "SMASH_IC", out_par));
+        std::make_unique<ICOutput>(output_path, "SMASH_IC_For_vHLLE", out_par));
   } else if ((format == "HepMC") || (format == "HepMC_asciiv3") ||
              (format == "HepMC_treeroot")) {
 #ifdef SMASH_USE_HEPMC
@@ -785,7 +822,7 @@ void Experiment<Modus>::create_output(const std::string &format,
 #else
         logg[LExperiment].error(
             "Requested HepMC_treeroot output not available, "
-            "ROOT or HepMC3 ROOTIO missing or not found by cmake.");
+            "ROOT or HepMC3_ROOTIO missing or not found by cmake.");
 #endif
       }
     } else if (content == "Collisions") {
@@ -799,7 +836,7 @@ void Experiment<Modus>::create_output(const std::string &format,
 #else
         logg[LExperiment].error(
             "Requested HepMC_treeroot output not available, "
-            "ROOT or HepMC3 ROOTIO missing or not found by cmake.");
+            "ROOT or HepMC3_ROOTIO missing or not found by cmake.");
 #endif
       }
     } else {
@@ -847,6 +884,9 @@ void Experiment<Modus>::create_output(const std::string &format,
         << "Unknown combination of format (" << format << ") and content ("
         << content << "). Fix the config.";
   }
+
+  logg[LExperiment].info() << "Added output " << content << " of format "
+                           << format << "\n";
 }
 
 /**
@@ -870,53 +910,56 @@ Experiment<Modus>::Experiment(Configuration &config,
          * the ScatterActionsFinderParameters member. Here that key is taken
          * from the main configuration and put there back after the "Collider"
          * section is extracted. If this were not done in this way, the
-         * sub-configuration given to ColliderModus would be deleted at the end
-         * of its constructor not empty and this would throw an exception.*/
-        const std::initializer_list<const char *> key_labels = {
-            "Modi", "Collider", "Collisions_Within_Nucleus"};
-        const bool restore_key = config.has_value(key_labels);
-        const bool temporary_taken_key = config.take(key_labels, false);
-        auto modus_config = config.extract_sub_configuration({"Modi"});
+         * sub-configuration given to ColliderModus would be deleted not empty
+         * at the end of its constructor and this would throw an exception.*/
+        auto &key = InputKeys::modi_collider_collisionWithinNucleus;
+        const bool restore_key = config.has_value(key);
+        const bool temporary_taken_key = config.take(key);
+        auto modus_config =
+            config.extract_complete_sub_configuration(InputSections::modi);
         if (restore_key) {
-          config.set_value(key_labels, temporary_taken_key);
+          config.set_value(key, temporary_taken_key);
         }
         return Modus{std::move(modus_config), parameters_};
       })),
       ensembles_(parameters_.n_ensembles),
-      nevents_(config.take({"General", "Nevents"}, 0)),
-      end_time_(config.take({"General", "End_Time"})),
+      end_time_(config.take(InputKeys::gen_endTime)),
       delta_time_startup_(parameters_.labclock->timestep_duration()),
-      force_decays_(
-          config.take({"Collision_Term", "Force_Decays_At_End"}, true)),
-      use_grid_(config.take({"General", "Use_Grid"}, true)),
-      metric_(
-          config.take({"General", "Metric_Type"}, ExpansionMode::NoExpansion),
-          config.take({"General", "Expansion_Rate"}, 0.1)),
-      dileptons_switch_(
-          config.take({"Collision_Term", "Dileptons", "Decays"}, false)),
-      photons_switch_(config.take(
-          {"Collision_Term", "Photons", "2to2_Scatterings"}, false)),
+      force_decays_(config.take(InputKeys::collTerm_forceDecaysAtEnd)),
+      use_grid_(config.take(InputKeys::gen_useGrid)),
+      metric_(config.take(InputKeys::gen_metricType),
+              config.take(InputKeys::gen_expansionRate)),
+      dileptons_switch_(config.take(InputKeys::collTerm_dileptons_decays)),
+      photons_switch_(
+          config.take(InputKeys::collTerm_photons_twoToTwoScatterings)),
       bremsstrahlung_switch_(
-          config.take({"Collision_Term", "Photons", "Bremsstrahlung"}, false)),
-      IC_output_switch_(config.has_value({"Output", "Initial_Conditions"})),
-      time_step_mode_(
-          config.take({"General", "Time_Step_Mode"}, TimeStepMode::Fixed)) {
+          config.take(InputKeys::collTerm_photons_bremsstrahlung)),
+      IC_switch_(config.has_section(InputSections::o_initialConditions) &&
+                 modus_.is_IC_for_hybrid()),
+      IC_dynamic_(IC_switch_ ? (modus_.IC_parameters().type ==
+                                FluidizationType::Dynamic)
+                             : false),
+      time_step_mode_(config.take(InputKeys::gen_timeStepMode)) {
   logg[LExperiment].info() << *this;
 
-  if (config.has_value({"General", "Minimum_Nonempty_Ensembles"})) {
-    if (config.has_value({"General", "Nevents"})) {
-      throw std::invalid_argument(
-          "Please specify either Nevents or Minimum_Nonempty_Ensembles.");
-    }
+  const bool user_wants_nevents = config.has_value(InputKeys::gen_nevents);
+  const bool user_wants_min_nonempty =
+      config.has_section(InputSections::g_minEnsembles);
+  if (user_wants_nevents == user_wants_min_nonempty) {
+    throw std::invalid_argument(
+        "Please specify either Nevents or Minimum_Nonempty_Ensembles.");
+  }
+  if (user_wants_nevents) {
+    event_counting_ = EventCounting::FixedNumber;
+    nevents_ = config.take(InputKeys::gen_nevents);
+  } else {
     event_counting_ = EventCounting::MinimumNonEmpty;
     minimum_nonempty_ensembles_ =
-        config.take({"General", "Minimum_Nonempty_Ensembles", "Number"});
-    int max_ensembles = config.take(
-        {"General", "Minimum_Nonempty_Ensembles", "Maximum_Ensembles_Run"});
-    max_events_ =
-        std::ceil(static_cast<double>(max_ensembles) / parameters_.n_ensembles);
-  } else {
-    event_counting_ = EventCounting::FixedNumber;
+        config.take(InputKeys::gen_minNonEmptyEnsembles_number);
+    int max_ensembles =
+        config.take(InputKeys::gen_minNonEmptyEnsembles_maximumEnsembles);
+    max_events_ = numeric_cast<int>(std::ceil(
+        static_cast<double>(max_ensembles) / parameters_.n_ensembles));
   }
 
   // covariant derivatives can only be done with covariant smearing
@@ -953,27 +996,30 @@ Experiment<Modus>::Experiment(Configuration &config,
   logg[LExperiment].info("Using ", parameters_.n_ensembles,
                          " parallel ensembles.");
 
-  if (modus_.is_box() &&
-      config.read({"Collision_Term", "Total_Cross_Section_Strategy"},
-                  InputKeys::collTerm_totXsStrategy.default_value()) !=
-          TotalCrossSectionStrategy::BottomUp) {
+  if (modus_.is_box() && config.read(InputKeys::collTerm_totXsStrategy) !=
+                             TotalCrossSectionStrategy::BottomUp) {
     logg[LExperiment].warn(
-        "To preserve detailed balance in a box simulation, it is recommended "
+        "To preserve detailed balance in a box simulation, it is recommended\n"
         "to use the bottom-up strategy for evaluating total cross sections.\n"
         "Consider adding the following line to the 'Collision_Term' section "
         "in your configuration file:\n"
         "   Total_Cross_Section_Strategy: \"BottomUp\"");
   }
-  if (modus_.is_box() &&
-      config.read({"Collision_Term", "Pseudoresonance"},
-                  InputKeys::collTerm_pseudoresonance.default_value()) !=
-          PseudoResonance::None) {
+  if (modus_.is_box() && config.read(InputKeys::collTerm_pseudoresonance) !=
+                             PseudoResonance::None) {
     logg[LExperiment].warn(
         "To preserve detailed balance in a box simulation, it is recommended "
         "to not include the pseudoresonances,\nas they artificially increase "
         "the resonance production without changing the corresponding "
         "decay.\nConsider adding the following line to the 'Collision_Term' "
         "section in your configuration file:\n   Pseudoresonance: \"None\"");
+  }
+
+  const bool IC_output = config.has_section(InputSections::o_initialConditions);
+  if (IC_output != modus_.is_IC_for_hybrid()) {
+    throw std::invalid_argument(
+        "The 'Initial_Conditions' subsection must be present in both 'Output' "
+        "and 'Modi: Collider' sections.");
   }
 
   /* In collider setup with sqrts >= 200 GeV particles don't form continuously
@@ -984,9 +1030,9 @@ Experiment<Modus>::Experiment(Configuration &config,
    *       the configuration temporary object will be destroyed not empty, hence
    *       throwing an exception.
    */
-  ParticleData::formation_power_ = config.take(
-      {"Collision_Term", "String_Parameters", "Power_Particle_Formation"},
-      modus_.sqrt_s_NN() >= 200. ? -1. : 1.);
+  ParticleData::formation_power_ =
+      config.take(InputKeys::collTerm_stringParam_powerParticleFormation,
+                  modus_.sqrt_s_NN() >= 200. ? -1. : 1.);
 
   // create finders
   if (dileptons_switch_) {
@@ -994,7 +1040,7 @@ Experiment<Modus>::Experiment(Configuration &config,
   }
   if (photons_switch_ || bremsstrahlung_switch_) {
     n_fractional_photons_ =
-        config.take({"Collision_Term", "Photons", "Fractional_Photons"}, 100);
+        config.take(InputKeys::collTerm_photons_fractionalPhotons);
   }
   if (parameters_.two_to_one) {
     if (parameters_.res_lifetime_factor < 0.) {
@@ -1009,9 +1055,10 @@ Experiment<Modus>::Experiment(Configuration &config,
           "hang.");
     }
     action_finders_.emplace_back(std::make_unique<DecayActionsFinder>(
-        parameters_.res_lifetime_factor, parameters_.do_weak_decays));
+        parameters_.res_lifetime_factor, parameters_.do_non_strong_decays,
+        force_decays_, parameters_.spin_interaction_type));
   }
-  bool no_coll = config.take({"Collision_Term", "No_Collisions"}, false);
+  bool no_coll = config.take(InputKeys::collTerm_noCollisions);
   if ((parameters_.two_to_one || parameters_.included_2to2.any() ||
        parameters_.included_multi.any() || parameters_.strings_switch) &&
       !no_coll) {
@@ -1032,100 +1079,66 @@ Experiment<Modus>::Experiment(Configuration &config,
     action_finders_.emplace_back(
         std::make_unique<WallCrossActionsFinder>(parameters_.box_length));
   }
-  if (IC_output_switch_) {
-    if (!modus_.is_collider()) {
-      throw std::runtime_error(
-          "Initial conditions can only be extracted in collider modus.");
-    }
-    double proper_time;
-    if (config.has_value({"Output", "Initial_Conditions", "Proper_Time"})) {
-      // Read in proper time from config
-      proper_time =
-          config.take({"Output", "Initial_Conditions", "Proper_Time"});
+
+  if (IC_switch_) {
+    const InitialConditionParameters &IC_parameters = modus_.IC_parameters();
+    if (IC_dynamic_) {
+      // Dynamic fluidization
+      action_finders_.emplace_back(std::make_unique<DynamicFluidizationFinder>(
+          modus_.fluid_lattice(), modus_.fluid_background(), IC_parameters));
     } else {
-      // Default proper time is the passing time of the two nuclei
-      double default_proper_time = modus_.nuclei_passing_time();
-      double lower_bound =
-          config.take({"Output", "Initial_Conditions", "Lower_Bound"}, 0.5);
-      if (default_proper_time >= lower_bound) {
-        proper_time = default_proper_time;
-      } else {
-        logg[LInitialConditions].warn()
-            << "Nuclei passing time is too short, hypersurface proper time set "
-               "to tau = "
-            << lower_bound << " fm.";
-        proper_time = lower_bound;
-      }
-    }
+      // Iso-tau hypersurface
+      double rapidity_cut = IC_parameters.rapidity_cut.value();
 
-    double rapidity_cut = 0.0;
-    if (config.has_value({"Output", "Initial_Conditions", "Rapidity_Cut"})) {
-      rapidity_cut =
-          config.take({"Output", "Initial_Conditions", "Rapidity_Cut"});
-      if (rapidity_cut <= 0.0) {
-        logg[LInitialConditions].fatal()
-            << "Rapidity cut for initial conditions configured as abs(y) < "
-            << rapidity_cut << " is unreasonable. \nPlease choose a positive, "
-            << "non-zero value or employ SMASH without rapidity cut.";
+      if (modus_.calculation_frame_is_fixed_target() && rapidity_cut != 0.0) {
         throw std::runtime_error(
-            "Kinematic cut for initial conditions malconfigured.");
+            "Rapidity cut for initial conditions output is not implemented "
+            "in the fixed target calculation frame. \nPlease use "
+            "\"center of velocity\" or \"center of mass\" as a "
+            "\"Calculation_Frame\" instead.");
       }
-    }
 
-    if (modus_.calculation_frame_is_fixed_target() && rapidity_cut != 0.0) {
-      throw std::runtime_error(
-          "Rapidity cut for initial conditions output is not implemented "
-          "in the fixed target calculation frame. \nPlease use "
-          "\"center of velocity\" or \"center of mass\" as a "
-          "\"Calculation_Frame\" instead.");
-    }
-
-    double transverse_momentum_cut = 0.0;
-    if (config.has_value({"Output", "Initial_Conditions", "pT_Cut"})) {
-      transverse_momentum_cut =
-          config.take({"Output", "Initial_Conditions", "pT_Cut"});
-      if (transverse_momentum_cut <= 0.0) {
-        logg[LInitialConditions].fatal()
-            << "transverse momentum cut for initial conditions configured as "
-               "pT < "
-            << rapidity_cut << " is unreasonable. \nPlease choose a positive, "
-            << "non-zero value or employ SMASH without pT cut.";
-        throw std::runtime_error(
-            "Kinematic cut for initial conditions misconfigured.");
+      double pT_cut = IC_parameters.pT_cut.value();
+      if (rapidity_cut > 0.0 || pT_cut > 0.0) {
+        kinematic_cuts_for_IC_output_ = true;
       }
-    }
 
-    if (rapidity_cut > 0.0 || transverse_momentum_cut > 0.0) {
-      kinematic_cuts_for_IC_output_ = true;
-    }
+      const double proper_time = std::invoke([&]() {
+        if (IC_parameters.proper_time.has_value()) {
+          return IC_parameters.proper_time.value();
+        } else {
+          // Scaling factor applied to the switching time and the lower bound
+          const double scaling = IC_parameters.proper_time_scaling.value();
+          // Lower bound for the switching time
+          const double lower_bound =
+              IC_parameters.lower_bound.value() * scaling;
+          // Default proper time is the passing time of the two nuclei
+          const double default_proper_time =
+              modus_.nuclei_passing_time() * scaling;
+          if (default_proper_time >= lower_bound) {
+            logg[LInitialConditions].info()
+                << "Nuclei passing time is " << default_proper_time << " fm.";
+            return default_proper_time;
+          } else {
+            logg[LInitialConditions].warn()
+                << "Nuclei passing time is too short, hypersurface proper time "
+                << "set to tau = " << lower_bound << " fm.";
+            return lower_bound;
+          }
+        }
+      });
 
-    if (rapidity_cut > 0.0 && transverse_momentum_cut > 0.0) {
-      logg[LInitialConditions].info()
-          << "Extracting initial conditions in kinematic range: "
-          << -rapidity_cut << " <= y <= " << rapidity_cut
-          << "; pT <= " << transverse_momentum_cut << " GeV.";
-    } else if (rapidity_cut > 0.0) {
-      logg[LInitialConditions].info()
-          << "Extracting initial conditions in kinematic range: "
-          << -rapidity_cut << " <= y <= " << rapidity_cut << ".";
-    } else if (transverse_momentum_cut > 0.0) {
-      logg[LInitialConditions].info()
-          << "Extracting initial conditions in kinematic range: pT <= "
-          << transverse_momentum_cut << " GeV.";
-    } else {
-      logg[LInitialConditions].info()
-          << "Extracting initial conditions without kinematic cuts.";
+      action_finders_.emplace_back(
+          std::make_unique<HyperSurfaceCrossActionsFinder>(
+              proper_time, rapidity_cut, pT_cut));
     }
-
-    action_finders_.emplace_back(
-        std::make_unique<HyperSurfaceCrossActionsFinder>(
-            proper_time, rapidity_cut, transverse_momentum_cut));
   }
 
-  if (config.has_value({"Collision_Term", "Pauli_Blocking"})) {
+  if (config.has_section(InputSections::c_pauliBlocking)) {
     logg[LExperiment].info() << "Pauli blocking is ON.";
     pauli_blocker_ = std::make_unique<PauliBlocker>(
-        config.extract_sub_configuration({"Collision_Term", "Pauli_Blocking"}),
+        config.extract_complete_sub_configuration(
+            InputSections::c_pauliBlocking),
         parameters_);
   }
 
@@ -1134,102 +1147,143 @@ Experiment<Modus>::Experiment(Configuration &config,
    *
    * \section output_directory_ Output directory
    *
-   *
-   * Per default, the selected output files
-   * will be saved in the directory ./data/\<run_id\>, where \<run_id\> is an
-   * integer number starting from 0. At the beginning of a run SMASH checks,
-   * if the ./data/0 directory exists. If it does not exist, it is created and
-   * all output files are written there. If the directory already exists,
-   * SMASH tries for ./data/1, ./data/2 and so on until it finds a free
-   * number.
+   * Per default, the selected output files will be saved in the directory
+   * `./data/<run_id>`, where `<run_id>` is an integer number starting from 0.
+   * At the beginning of a run SMASH checks if the `./data/0` directory exists.
+   * If it does not exist, it is created and all output files are written there.
+   * If the directory already exists, SMASH tries for `./data/1`, `./data/2` and
+   * so on until it finds a free number.
    *
    * The user can change output directory by a command line option, if
    * desired:
    * \code smash -o <user_output_dir> \endcode
+   * SMASH, by default, will create the specified folder if not existing or will
+   * use it if the specified folder exists and is empty. However, if the folder
+   * exists and is not empty SMASH will abort with an error to avoid overwriting
+   * existing files.
+   *
+   * ---
    *
    * \section output_contents_ Output content
    *
    * Output in SMASH is distinguished by _content_ and _format_, where content
    * means the physical information contained in the output (e.g. list of
    * particles, list of interactions, thermodynamics, etc) and format (e.g.
-   * Oscar, binary or ROOT). The same content can be printed out in several
-   * formats _simultaneously_.
+   * ASCII, binary or ROOT). The same content can be printed out in several
+   * formats _simultaneously_. See \ref config_output_examples for examples.
    *
-   * For an example of choosing specific output contents see
-   * \ref doxypage_output_conf_examples.
+   * These are the possible contents offered by SMASH:
    *
-   * The list of possible contents follows:
+   * - \b %Particles:
+   *         List of particles at regular time intervals in the computational
+   *         frame or (optionally) only at the event end.
+   *   - Available formats:
+   *         \ref doxypage_output_oscar_particles, \ref doxypage_output_ascii,
+   *         \ref doxypage_output_binary, \ref doxypage_output_root,
+   *         \ref doxypage_output_vtk, \ref doxypage_output_hepmc.
+   * - \b Collisions:
+   *         List of interactions: collisions, decays, box wall crossings and
+   *         forced thermalizations. Information about incoming, outgoing
+   *         particles and the interaction itself is printed out.
+   *   - Available formats:
+   *         \ref doxypage_output_oscar_collisions, \ref doxypage_output_ascii,
+   *         \ref doxypage_output_binary, \ref doxypage_output_root,
+   *         \ref doxypage_output_hepmc.
+   * - \b Dileptons:
+   *          Special dilepton output, see \ref doxypage_output_dileptons.
+   *   - Available formats:
+   *         \ref doxypage_output_oscar_collisions, \ref doxypage_output_ascii,
+   *         \ref doxypage_output_binary, \ref doxypage_output_root.
+   * - \b Photons:
+   *          Special photon output, see \ref doxypage_output_photons.
+   *   - Available formats:
+   *         \ref doxypage_output_oscar_collisions, \ref doxypage_output_ascii,
+   *         \ref doxypage_output_binary, \ref doxypage_output_root.
+   * - \b Thermodynamics:
+   *          This output allows to print out thermodynamic quantities, see \ref
+   *          input_output_thermodynamics_.
+   *    - Available formats:
+   *          \ref doxypage_output_thermodyn,
+   *          \ref doxypage_output_thermodyn_lattice,
+   *          \ref doxypage_output_vtk_lattice.
+   * - \b Initial_Conditions:
+   *          Special initial conditions output, see
+   *          \ref doxypage_output_initial_conditions for details.
+   *   - Available formats:
+   *         \ref doxypage_output_oscar_particles,
+   *         \ref doxypage_output_initial_conditions.
+   * - \b Rivet:
+   *          Run Rivet analysis on generated events and output results, see
+   *          \ref doxypage_output_rivet for details.
+   *    - Available formats:
+   *          \ref doxypage_output_rivet.
    *
-   * - \b Particles  List of particles at regular time intervals in the
-   *                 computational frame or (optionally) only at the event end.
-   *   - Available formats: \ref doxypage_output_oscar_particles,
-   *                        \ref doxypage_output_binary, \ref
-   *                        doxypage_output_root, \ref doxypage_output_vtk, \ref
-   *                        doxypage_output_hepmc
-   * - \b Collisions List of interactions: collisions, decays, box wall
-   *                 crossings and forced thermalizations. Information about
-   *                 incoming, outgoing particles and the interaction itself
-   *                 is printed out.
-   *   - Available formats: \ref doxypage_output_oscar_collisions, \ref
-   *                        doxypage_output_binary, \ref doxypage_output_root,
-   *                        \ref doxypage_output_hepmc
-   * - \b Dileptons  Special dilepton output, see
-   *                 \ref doxypage_output_dileptons.
-   *   - Available formats: \ref doxypage_output_oscar_collisions,
-   *                        \ref doxypage_output_binary and \ref
-   *                        doxypage_output_root
-   * - \b Photons   Special photon output, see
-   *                \ref doxypage_output_photons.
-   *   - Available formats: \ref doxypage_output_oscar_collisions,
-   *                        \ref doxypage_output_binary and \ref
-   *                        doxypage_output_root.
-   * - \b Thermodynamics   This output allows to print out thermodynamic
-   *                       quantities, see \ref input_output_thermodynamics_.
-   *    - Available formats: \ref doxypage_output_thermodyn,
-   *                         \ref doxypage_output_thermodyn_lattice,
-   *                         \ref doxypage_output_vtk_lattice
-   * - \b Initial_Conditions  Special initial conditions output, see
-   *                          \ref doxypage_output_initial_conditions for
-   *                          details.
-   *   - Available formats: \ref doxypage_output_oscar_particles, \ref
-   *                        doxypage_output_initial_conditions
-   * - \b Rivet Run Rivet analysis on generated events and output
-   *            results, see \ref doxypage_output_rivet for
-   *            details.
-   *    - Available formats: \ref doxypage_output_rivet
+   * \attention At the moment, the \b Initial_Conditions and \b Rivet outputs
+   * content as well as the \b HepMC format cannot be used <u>with multiple
+   * parallel ensembles</u> and SMASH will abort if the user tries to do so.
+   * The \b Collisions content, instead, is allowed, although in it collisions
+   * coming from different ensembles are simply printed all together in an
+   * effectively unpredictable order and it is not possible to know which one
+   * belongs to which ensemble. Therefore SMASH warns the user about this fact
+   * and this setup should only be used if in the data analysis it is not
+   * necessary to trace back which data belongs to which ensemble.
    *
-   *
-   * \n
+   * ---
    *
    * \section list_of_output_formats Output formats
    *
-   * For choosing output formats see
-   * \ref doxypage_output_conf_examples.
    * Every output content can be printed out in several formats:
-   * - \b "Oscar1999", \b "Oscar2013" - human-readable text output\n
-   *   - For "Particles" content: \ref doxypage_output_oscar_particles
-   *   - For "Collisions" content: \ref doxypage_output_oscar_collisions
-   *   - General block structure of OSCAR formats:
-   *     \ref doxypage_output_oscar
-   * - \b "Binary" - binary, not human-readable output
-   *   - Faster to read and write than text outputs
-   *   - Saves coordinates and momenta with the full double precision
-   *   - General file structure is similar to \ref doxypage_output_oscar
-   *   - Detailed description: \ref doxypage_output_binary
-   * - \b "Root" - binary output in the format used by ROOT software
-   *     (http://root.cern.ch)
+   *
+   * - \b "ASCII" - a human-readable text-format table of values.
+   *   - For\n
+   *     &emsp;&emsp;`"Particles"` (\ref doxypage_output_oscar_particles),\n
+   *     &emsp;&emsp;`"Collisions"`, `"Dileptons"`, and `"Photons"` (\ref
+   *     doxypage_output_oscar_collisions)\n contents, it uses the \ref
+   *     doxypage_output_oscar "OSCAR block structure".\n In these cases it is
+   *     possible to customize the quantities to be printed into the output file
+   *     (\ref doxypage_output_ascii).
+   *   - For `"Initial_Conditions"` content the output has \ref
+   *     doxypage_output_initial_conditions "a fixed block structure".
+   *   - For `"Thermodynamics"` content the information stored in the output
+   *     file depends on few input keys. Furthermore,
+   *      - using \b "ASCII" as format, the \ref doxypage_output_thermodyn
+   *        "standard thermodynamics output" is produced;
+   *      - using \b "Lattice_ASCII", the \ref doxypage_output_thermodyn_lattice
+   *        "quantities on a lattice" are printed out.
+   * - \b "Binary" - a binary, not human-readable list of values.
+   *   - The \ref doxypage_output_binary "binary output" is faster to read and
+   *     write than text outputs and all floating point numbers are printed with
+   *     their full precision.
+   *   - For `"Particles"`, `"Collisions"`, `"Dileptons"`, `"Photons"`, and
+   *     `"Initial_Conditions"` contents, it is a binary version equivalent to
+   *     the corresponding ASCII output.\n Also for binary format it is possible
+   *     to customize the quantities to be printed into the file.
+   *   - For the other contents the corresponding documentation pages about the
+   *     ASCII format contain further information.
+   * - \b "Oscar1999", \b "Oscar2013" - aliases for the \b "ASCII" format with a
+   *   predefined set of quantities.
+   * - \b "Oscar2013_bin" - alias for the \b "Binary" format with a predefined
+   *   set of quantities.
+   * - \b "For_vHLLE" - an alias for the \b "ASCII" format exclusive to the
+   *   `"Initial_Conditions"` output content, which produces a file compatible
+   *   with the vHLLE hydrodynamic evolution code (see \ref
+   *   doxypage_output_initial_conditions). This is only available for
+   *   <tt>\ref key_MC_IC_type_ "Constant_Tau"</tt> fluidizations.
+   * - \b "Root" - binary output in the format used by
+   *   <a href="http://root.cern.ch">the ROOT software</a>
    *   - Even faster to read and write, requires less disk space
    *   - Format description: \ref doxypage_output_root
-   * - \b "VTK" - text output suitable for an easy
-   *     visualization using paraview software
-   *   - This output can be opened by paraview to see the visulalization.
+   * - \b "VTK" - text output suitable for an easy visualization using
+   *   third-party software
+   *   - There are many different programs that can open a VTK file, although
+   *     their functionality varies.
+   *   - This output can be for example visualized with
+   *     <a href="http://paraview.org/">Paraview</a>. Alternatives are e.g.
+   *     <a href=https://docs.enthought.com/mayavi/mayavi/data.html>Mayavi</a>
+   *     or <a
+   *     href=https://reference.wolfram.com/language/ref/format/VTK.html>Mathematica</a>.
    *   - For "Particles" content \ref doxypage_output_vtk
    *   - For "Thermodynamics" content \ref doxypage_output_vtk_lattice
-   * - \b "ASCII" - a human-readable text-format table of values
-   *   - Used for "Thermodynamics" and "Initial_Conditions", see
-   * \ref doxypage_output_thermodyn
-   * \ref doxypage_output_thermodyn_lattice
-   * \ref doxypage_output_initial_conditions
    * - \b "HepMC_asciiv3", \b "HepMC_treeroot" - HepMC3 human-readble asciiv3 or
    *   Tree ROOT format see \ref doxypage_output_hepmc for details
    * - \b "YODA", \b "YODA-full" - compact ASCII text format used by the
@@ -1246,9 +1300,9 @@ Experiment<Modus>::Experiment(Configuration &config,
    * configuration file enables the dilepton production. In addition, the
    * dilepton output also needs to be enabled in the output section and dilepton
    * decays have to be uncommented in the used decaymodes.txt file. The output
-   * file named Dileptons (followed by the appropriate suffix) is generated when
-   * SMASH is executed. It's format is identical to the collision output (see
-   * \ref doxypage_output_oscar_collisions), it does however only contain
+   * file named \a Dileptons (followed by the appropriate suffix) is generated
+   * when SMASH is executed. It's format is identical to the collision output
+   * (see \ref doxypage_output_oscar_collisions), it does however only contain
    * information about the dilepton decays. \n Further, the block headers differ
    * from the usual collision output: <div class="fragment"> <div class="line">
    * <span class="preprocessor">
@@ -1280,7 +1334,7 @@ Experiment<Modus>::Experiment(Configuration &config,
    * \page doxypage_output_photons
    * The existence of a photon subsection in the output section of the
    * configuration file enables the photon output.
-   * If photons are enabled, the output file named Photons (followed by the
+   * If photons are enabled, the output file named \a Photons (followed by the
    * appropriate suffix) is generated when SMASH is executed. It's format is
    * identical to the collision output (see \ref
    * doxypage_output_oscar_collisions), it does however only contain information
@@ -1300,7 +1354,7 @@ Experiment<Modus>::Experiment(Configuration &config,
    * \li \key part_weight: Always 0.0 for photon processes, as they
    * are hardcoded.
    * \li \key proc_type: The type of the underlying process. See
-   * \ref doxypage_output_oscar_particles_process_types for possible types.
+   * \ref doxypage_output_process_types for possible types.
    *
    * Note, that "interaction", "in", "out", "rho", "weight", "partial" and
    * "type" are no variables, but words that are printed. \n
@@ -1311,74 +1365,93 @@ Experiment<Modus>::Experiment(Configuration &config,
 
   /*!\Userguide
    * \page doxypage_output_initial_conditions
-   * The existence of an initial conditions subsection in the output section of
-   * the configuration file enables the IC output. In addition, all particles
-   * that cross the hypersurface of predefined proper time are removed from the
-   * evolution. This proper time is taken from the \key Proper_Time field
-   * in the \key Initial_Conditions subsection when configuring the output. If
-   * this information
-   * is not provided, the default proper time corresponds to the passing time
-   * of the two nuclei, where all primary interactions are expected to have
-   * occured: \f[ \tau_0 =
-   * (r_\mathrm{p} \ + \ r_\mathrm{t}) \ \left(\left(\frac{\sqrt{s_\mathrm{NN}}}
-   * {2 \ m_\mathrm{N}}\right)^2
-   * - 1\right)^{-1/2} \f]
-   * Therein, \f$ r_\mathrm{p} \f$ and \f$ r_\mathrm{t} \f$ denote the radii of
-   * the projectile and target nucleus, respectively, \f$
-   * \sqrt{s_\mathrm{NN}}\f$
-   * is the collision energy per nucleon and \f$ m_\mathrm{N} \f$ the nucleon
-   * mass. Note though that, if the passing time is smaller than 0.5 fm, the
-   * default proper time of the hypersurface is taken to be \f$\tau = 0.5 \f$
-   * as a minimum bound to ensure the proper time is large enough
-   * to also extract reasonable initial conditions at RHIC/LHC energies. If
-   * desired, this lowest possible value can also be specified in the
-   * configuration file in the \key Lower_Bound field. \n Once
-   * initial conditions are enabled, the output file named SMASH_IC (followed by
-   * the appropriate suffix) is generated when SMASH is executed. \n The output
-   * is available in Oscar1999, Oscar2013, binary and ROOT format, as well as in
-   * an additional ASCII format (see \ref doxypage_output_initial_conditions).
-   * The latter is meant to directly serve as an input for the vHLLE
-   * hydrodynamics code (I. Karpenko, P. Huovinen, M. Bleicher: Comput. Phys.
-   * Commun. 185, 3016 (2014)).\n \n
-   * ### Oscar output
-   * In case
-   * of the Oscar1999 and Oscar2013 format, the structure is identical to the
-   * Oscar Particles Format (see \ref doxypage_output_oscar_particles). \n
-   * In contrast
-   * to the usual particles output however, the initial conditions output
-   * provides a
-   * **list of all particles removed from the evolution** at the time when
-   * crossing the hypersurface. This implies that neither the initial particle
-   * list nor the particle list at each time step is printed.\n The general
-   * Oscar structure as described in \ref doxypage_output_oscar_particles is
-   * preserved. \n
-   * \n
-   * ### Binary output
-   * The binary initial
-   * conditions output also provides a list of all particles removed from the
-   * evolution at the time when crossing the hypersurface. For each removed
-   * particle a 'p' block is created stores the particle data. The general
-   * binary output structure as described in \ref doxypage_output_binary is
-   * preserved.\n \n
-   * ### ROOT output
+   * Once initial conditions are enabled, the output file named \a SMASH_IC
+   * (followed by the appropriate suffix) is generated when SMASH is executed.
+   * \n The output is available in Oscar1999, Oscar2013, ASCII, Oscar2013_bin
+   * and ROOT format, as well as in an additional "For_vHLLE" format. The latter
+   * is meant to directly serve as input for the vHLLE hydrodynamics code
+   * \iref{Karpenko:2013wva}.\n
+   *
+   * <h3> Human-readable output </h3> In case of the Oscar1999 and Oscar2013
+   * format, the structure is identical to the Oscar Particles format (see \ref
+   * doxypage_output_oscar_particles), and the custom ASCII format is also
+   * available. \n In contrast to the usual particles output however, the
+   * initial conditions output provides a **list of all particles removed from
+   * the evolution** at the time when crossing the hypersurface. This implies
+   * that neither the initial particle list nor the particle list at each time
+   * step is printed. \n The general Oscar structure as described in \ref
+   * doxypage_output_oscar_particles is preserved.\n
+   *
+   * <h3>Binary output</h3>
+   *
+   * The binary initial conditions output also provides a list of all particles
+   * removed from the evolution at the time when they cross the hypersurface.
+   * For each removed particle a 'p' block is created that stores the particle
+   * data.
+   *
+   * Only the particle block header differs from the standard binary output
+   * structure described in \ref doxypage_output_binary; the individual particle
+   * lines themselves use exactly the same layout as in the regular binary
+   * output.
+   *
+   * The header has the following structure:
+   * \code
+   * char        uint32_t
+   * 'p'      n_part_lines
+   * \endcode
+   *
+   * \n Custom particle quantities are also available; their usage is described
+   * in \ref doxypage_output_binary.
+   *
+   * <h3> ROOT output </h3>
    * The initial conditions output in shape of a list of all particles removed
-   * from the SMASH evolution when crossing the hypersurface is also available
-   * in ROOT format. Neither the initial nor the final particle lists are
-   * printed, but the general structure for particle TTrees, as described in
-   * \ref doxypage_output_root, is preserved.
+   * from the SMASH evolution with a \c "Constant_Tau" fluidization criterion
+   * is also available in ROOT format. Neither the initial nor the final
+   * particle lists are printed, but the general structure for particle TTrees,
+   * as described in \ref doxypage_output_root, is preserved.
+   */
+
+  /*!\Userguide
+   * \page doxypage_output_spin
+   * In order to enable spin output, two conditions have to be fulfilled:
+   * 1. Spin interactions have to be enabled in the collision term section of
+   * the configuration file.
+   * 2. The spin components `spin0`, `spinx`, `spiny` and `spinz` have to be
+   * specified in the `Quantities` list of the Particles output subsection.
+   * \see_key{key_output_particles_quantities_}
+   *
+   * Spin output is available in OSCAR2013 format. If spins are enabled, the
+   * resulting output file contains the four components of the mean spin
+   * (Pauli-Lubanski) vector \f$S^\mu\f$. The components of the mean spin vector
+   * are set in two different ways, depending on the mode, in which SMASH is
+   * used:
+   * #### SMASH Collider Modus
+   * In the collider mode, the components of the mean spin vector are sampled
+   * from a gaussian distribution with a mean value of 0 in the particle rest
+   * frame to ensure that the average polarization vanishes. This strategy
+   * guarantees that spectators do not contribute with an artificial
+   * polarization.
+   * #### SMASH List Mode
+   * In the list mode, the components of the mean spin vector are read from the
+   * input file.
    */
 
   // create outputs
   logg[LExperiment].trace(SMASH_SOURCE_LOCATION,
                           " create OutputInterface objects");
-  dens_type_ = config.take({"Output", "Density_Type"}, DensityType::None);
+  dens_type_ = config.take(InputKeys::output_densityType);
   logg[LExperiment].debug()
       << "Density type printed to headers: " << dens_type_;
 
   /* Parse configuration about output contents and formats, doing all logical
-   * checks about specified formats, creating all needed output objects. */
+   * checks about specified formats, creating all needed output objects. Note
+   * that we first extract the output sub configuration without the "Output:"
+   * enclosing section to easily get all output contents and then we reintroduce
+   * it for the actual parsing (remember we parse database keys which have
+   * labels from the top-level only).
+   */
   auto output_conf = config.extract_sub_configuration(
-      {"Output"}, Configuration::GetEmpty::Yes);
+      InputSections::output, Configuration::GetEmpty::Yes);
   if (output_path == "") {
     throw std::invalid_argument(
         "Invalid empty output path provided to Experiment constructor.");
@@ -1393,28 +1466,81 @@ Experiment<Modus>::Experiment(Configuration &config,
                             "exists, but it is not a directory.");
     throw std::logic_error("Attempt to use invalid existing path.");
   }
+  const std::vector<std::string> output_contents =
+      output_conf.list_upmost_nodes();
   if (output_conf.is_empty()) {
     logg[LExperiment].warn() << "No \"Output\" section found in the input "
                                 "file. No output file will be produced.";
+  } else {
+    output_conf.enclose_into_section(InputSections::output);
   }
-  const std::vector<std::string> output_contents =
-      output_conf.list_upmost_nodes();
   std::vector<std::vector<std::string>> list_of_formats(output_contents.size());
   std::transform(
       output_contents.cbegin(), output_contents.cend(), list_of_formats.begin(),
       [&output_conf](std::string content) -> std::vector<std::string> {
-        /* Use here a default value for "Format" even though it is a required
-         * key, just because then here below the error for the user is more
-         * informative, if the key was not given in the input file. */
-        return output_conf.take({content.c_str(), "Format"},
-                                std::vector<std::string>{});
+        /* Note that the "Format" key has an empty list as default, although it
+         * is a required key, because then here below the error for the user is
+         * more informative, if the key was not given in the input file. */
+        return output_conf.take(InputKeys::get_output_format_key(content));
       });
-  const OutputParameters output_parameters(std::move(output_conf));
-  std::size_t total_number_of_requested_formats = 0;
   auto abort_because_of_invalid_input_file = []() {
     throw std::invalid_argument("Invalid configuration input file.");
   };
+  const OutputParameters output_parameters(std::move(output_conf));
   for (std::size_t i = 0; i < output_contents.size(); ++i) {
+    if (output_contents[i] == "Particles" ||
+        output_contents[i] == "Collisions" ||
+        output_contents[i] == "Dileptons" || output_contents[i] == "Photons" ||
+        output_contents[i] == "Initial_Conditions") {
+      assert(output_parameters.quantities.count(output_contents[i]) > 0);
+      const bool quantities_given_nonempty =
+          !output_parameters.quantities.at(output_contents[i]).empty();
+      auto formats_contains = [&list_of_formats, &i](const std::string &label) {
+        return std::find(list_of_formats[i].begin(), list_of_formats[i].end(),
+                         label) != list_of_formats[i].end();
+      };
+      const bool custom_ascii_requested = formats_contains("ASCII");
+      const bool custom_binary_requested = formats_contains("Binary");
+      const bool custom_requested =
+          custom_ascii_requested || custom_binary_requested;
+      const bool oscar2013_requested = formats_contains("Oscar2013");
+      const bool oscar2013_bin_requested = formats_contains("Oscar2013_bin");
+      const bool is_extended = (output_contents[i] == "Particles")
+                                   ? output_parameters.part_extended
+                                   : output_parameters.coll_extended;
+      const auto &default_quantities =
+          (is_extended) ? OutputDefaultQuantities::oscar2013extended
+                        : OutputDefaultQuantities::oscar2013;
+      const bool are_given_quantities_oscar2013_ones =
+          output_parameters.quantities.at(output_contents[i]) ==
+          default_quantities;
+      if (quantities_given_nonempty != custom_requested) {
+        logg[LExperiment].fatal()
+            << "Non-empty \"Quantities\" and \"ASCII\"/\"Binary\" format have "
+            << "not been specified both for " << std::quoted(output_contents[i])
+            << " in config file.";
+        abort_because_of_invalid_input_file();
+      }
+      if (custom_ascii_requested && oscar2013_requested &&
+          are_given_quantities_oscar2013_ones) {
+        logg[LExperiment].fatal()
+            << "The specified \"Quantities\" for the ASCII format are the same "
+               "as those of the requested \"Oscar2013\"\nformat for "
+            << std::quoted(output_contents[i])
+            << " and this would produce the same output file twice.";
+        abort_because_of_invalid_input_file();
+      }
+      if (custom_binary_requested && oscar2013_bin_requested &&
+          are_given_quantities_oscar2013_ones) {
+        logg[LExperiment].fatal()
+            << "The specified \"Quantities\" for the binary format are the "
+               "same as those of the requested \"Oscar2013_bin\"\nformat for "
+            << std::quoted(output_contents[i])
+            << " and this would produce the same output file twice.";
+        abort_because_of_invalid_input_file();
+      }
+    }
+
     if (list_of_formats[i].empty()) {
       logg[LExperiment].fatal()
           << "Empty or unspecified list of formats for "
@@ -1452,11 +1578,18 @@ Experiment<Modus>::Experiment(Configuration &config,
           << "] -> [" << new_formats << "]'";
       list_of_formats[i].assign(tmp_set.begin(), tmp_set.end());
     }
+  }
+
+  /* Repeat loop over output_contents here to create all outputs after having
+   * validated all content specifications. This is more user-friendly. */
+  std::size_t total_number_of_requested_formats = 0;
+  for (std::size_t i = 0; i < output_contents.size(); ++i) {
     for (const auto &format : list_of_formats[i]) {
       create_output(format, output_contents[i], output_path, output_parameters);
       ++total_number_of_requested_formats;
     }
   }
+
   if (outputs_.size() != total_number_of_requested_formats) {
     logg[LExperiment].fatal()
         << "At least one invalid output format has been provided.";
@@ -1468,7 +1601,7 @@ Experiment<Modus>::Experiment(Configuration &config,
    * always have to take it, otherwise SMASH will complain about unused
    * options. We have to provide a default value for modi other than Collider.
    */
-  if (config.has_value({"Potentials"})) {
+  if (config.has_section(InputSections::potentials)) {
     if (time_step_mode_ == TimeStepMode::None) {
       logg[LExperiment].error() << "Potentials only work with time steps!";
       throw std::invalid_argument("Can't use potentials without time steps!");
@@ -1485,7 +1618,8 @@ Experiment<Modus>::Experiment(Configuration &config,
                              << parameters_.labclock->timestep_duration();
     // potentials need density calculation parameters from parameters_
     potentials_ = std::make_unique<Potentials>(
-        config.extract_sub_configuration({"Potentials"}), parameters_);
+        config.extract_complete_sub_configuration(InputSections::potentials),
+        parameters_);
     // make sure that vdf potentials are not used together with Skyrme
     // or symmetry potentials
     if (potentials_->use_skyrme() && potentials_->use_vdf()) {
@@ -1612,12 +1746,12 @@ Experiment<Modus>::Experiment(Configuration &config,
   }
 
   // Create lattices
-  if (config.has_value({"Lattice"})) {
-    bool automatic = config.take({"Lattice", "Automatic"}, false);
+  if (config.has_section(InputSections::lattice)) {
+    bool automatic = config.take(InputKeys::lattice_automatic);
     bool all_geometrical_properties_specified =
-        config.has_value({"Lattice", "Cell_Number"}) &&
-        config.has_value({"Lattice", "Origin"}) &&
-        config.has_value({"Lattice", "Sizes"});
+        config.has_value(InputKeys::lattice_cellNumber) &&
+        config.has_value(InputKeys::lattice_origin) &&
+        config.has_value(InputKeys::lattice_sizes);
     if (!automatic && !all_geometrical_properties_specified) {
       throw std::invalid_argument(
           "The lattice was requested to be manually generated, but some\n"
@@ -1630,46 +1764,63 @@ Experiment<Modus>::Experiment(Configuration &config,
           "lattice geometrical properties were specified. In this case you\n"
           "need to set \"Automatic: False\".");
     }
-    bool periodic = config.take({"Lattice", "Periodic"}, modus_.is_box());
+    bool periodic = config.take(InputKeys::lattice_periodic, modus_.is_box());
     const auto [l, n, origin] = [&config, automatic, this]() {
       if (!automatic) {
         return std::make_tuple<std::array<double, 3>, std::array<int, 3>,
                                std::array<double, 3>>(
-            config.take({"Lattice", "Sizes"}),
-            config.take({"Lattice", "Cell_Number"}),
-            config.take({"Lattice", "Origin"}));
+            config.take(InputKeys::lattice_sizes),
+            config.take(InputKeys::lattice_cellNumber),
+            config.take(InputKeys::lattice_origin));
       } else {
         std::array<double, 3> l_default{20., 20., 20.};
         std::array<int, 3> n_default{10, 10, 10};
         std::array<double, 3> origin_default{-20., -20., -20.};
-        if (modus_.is_collider() || (modus_.is_list() && !modus_.is_box())) {
+        if (modus_.is_list() && !modus_.is_box()) {
+          logg[LExperiment].fatal(
+              "The lattice in List modus should be manually specified.");
+          throw std::invalid_argument("Invalid Lattice setup.");
+        } else if (modus_.is_collider()) {
           // Estimates on how far particles could get in x, y, z. The
           // default lattice is currently not contracted for afterburner runs
-          const double gam = modus_.is_collider()
-                                 ? modus_.sqrt_s_NN() / (2.0 * nucleon_mass)
-                                 : 1.0;
-          const double max_z = 5.0 / gam + end_time_;
+          const double gamma = modus_.sqrt_s_NN() / (2.0 * nucleon_mass);
+          const double max_z = 5.0 / gamma + end_time_;
           const double estimated_max_transverse_velocity = 0.7;
           const double max_xy =
               5.0 + estimated_max_transverse_velocity * end_time_;
           origin_default = {-max_xy, -max_xy, -max_z};
           l_default = {2 * max_xy, 2 * max_xy, 2 * max_z};
-          // Go for approximately 0.8 fm cell size and contract
-          // lattice in z by gamma factor
-          const int n_xy = std::ceil(2 * max_xy / 0.8);
-          int nz = std::ceil(2 * max_z / 0.8);
-          // Contract lattice by gamma factor in case of smearing where
-          // smearing length is bound to the lattice cell length
-          if (parameters_.smearing_mode == SmearingMode::Discrete ||
-              parameters_.smearing_mode == SmearingMode::Triangular) {
-            nz = static_cast<int>(std::ceil(2 * max_z / 0.8 * gam));
+          // For collider modus only, impose a minimum size of 30fm since the
+          // heuristic above for determining the lattice expects the end time to
+          // be large compared to the nucleus size
+          const double minimum_extension = 30.;
+          for (auto i = std::size_t{0}; i < l_default.size(); i++) {
+            if (l_default[i] < minimum_extension) {
+              logg[LExperiment].debug()
+                  << "Automatic lattice extension in direction " << i
+                  << " heuristically determined as " << l_default[i]
+                  << " fm is smaller than " << minimum_extension
+                  << " fm. Imposing minimum size.";
+              l_default[i] = minimum_extension;
+              origin_default[i] = -0.5 * minimum_extension;
+            }
           }
+          // Go for approximately 0.8 fm cell size and contract lattice in z by
+          // gamma factor in case of smearing where smearing length is bound to
+          // the lattice cell length
+          const int n_xy = numeric_cast<int>(std::ceil(l_default[0] / 0.8));
+          const bool to_be_contracted =
+              (parameters_.smearing_mode == SmearingMode::Discrete ||
+               parameters_.smearing_mode == SmearingMode::Triangular);
+          const double contraction_factor = (to_be_contracted) ? gamma : 1.0;
+          const int nz = numeric_cast<int>(
+              std::ceil(l_default[2] / 0.8 * contraction_factor));
           n_default = {n_xy, n_xy, nz};
         } else if (modus_.is_box()) {
           origin_default = {0., 0., 0.};
           const double bl = modus_.length();
           l_default = {bl, bl, bl};
-          const int n_xyz = std::ceil(bl / 0.5);
+          const int n_xyz = numeric_cast<int>(std::ceil(bl / 0.5));
           n_default = {n_xyz, n_xyz, n_xyz};
         } else if (modus_.is_sphere()) {
           // Maximal distance from (0, 0, 0) at which a particle
@@ -1678,15 +1829,15 @@ Experiment<Modus>::Experiment(Configuration &config,
           origin_default = {-max_d, -max_d, -max_d};
           l_default = {2 * max_d, 2 * max_d, 2 * max_d};
           // Go for approximately 0.8 fm cell size
-          const int n_xyz = std::ceil(2 * max_d / 0.8);
+          const int n_xyz = numeric_cast<int>(std::ceil(2 * max_d / 0.8));
           n_default = {n_xyz, n_xyz, n_xyz};
         }
         // Take lattice properties from config to assign them to all lattices
         return std::make_tuple<std::array<double, 3>, std::array<int, 3>,
                                std::array<double, 3>>(
-            config.take({"Lattice", "Sizes"}, l_default),
-            config.take({"Lattice", "Cell_Number"}, n_default),
-            config.take({"Lattice", "Origin"}, origin_default));
+            config.take(InputKeys::lattice_sizes, l_default),
+            config.take(InputKeys::lattice_cellNumber, n_default),
+            config.take(InputKeys::lattice_origin, origin_default));
       }
     }();
 
@@ -1822,15 +1973,15 @@ Experiment<Modus>::Experiment(Configuration &config,
   }
 
   // Create forced thermalizer
-  if (config.has_value({"Forced_Thermalization"})) {
-    Configuration th_conf =
-        config.extract_sub_configuration({"Forced_Thermalization"});
+  if (config.has_section(InputSections::forcedThermalization)) {
+    Configuration th_conf = config.extract_complete_sub_configuration(
+        InputSections::forcedThermalization);
     thermalizer_ = modus_.create_grandcan_thermalizer(th_conf);
   }
 
   /* Take the seed setting only after the configuration was stored to a file
    * in smash.cc */
-  seed_ = config.take({"General", "Randomseed"});
+  seed_ = config.take(InputKeys::gen_randomseed);
 }
 
 /// String representing a horizontal line.
@@ -2040,10 +2191,7 @@ void Experiment<Modus>::initialize_new_event() {
       auto event_info = fill_event_info(
           ensembles_, E_mean_field, modus_.impact_parameter(), parameters_,
           projectile_target_interact_[i_ens], kinematic_cuts_for_IC_output_);
-      output->at_eventstart(ensembles_[i_ens],
-                            // Pretend each ensemble is an independent event
-                            event_ * parameters_.n_ensembles + i_ens,
-                            event_info);
+      output->at_eventstart(ensembles_[i_ens], {event_, i_ens}, event_info);
     }
     // For thermodynamic output
     output->at_eventstart(ensembles_, event_);
@@ -2111,12 +2259,32 @@ template <typename Modus>
 bool Experiment<Modus>::perform_action(Action &action, int i_ensemble,
                                        bool include_pauli_blocking) {
   Particles &particles = ensembles_[i_ensemble];
+  auto &incoming = action.incoming_particles();
   // Make sure to skip invalid and Pauli-blocked actions.
   if (!action.is_valid(particles)) {
     discarded_interactions_total_++;
     logg[LExperiment].debug(~einhard::DRed(), "✘ ", action,
                             " (discarded: invalid)");
     return false;
+  }
+  const bool core_in_incoming =
+      std::any_of(incoming.begin(), incoming.end(),
+                  [](const ParticleData &p) { return p.is_core(); });
+  if (core_in_incoming) {
+    if (action.get_type() == ProcessType::FluidizationNoRemoval) {
+      // If the incoming particle is already core, the action should not happen.
+      logg[LExperiment].debug() << "Discarding " << incoming[0].id();
+      return false;
+    } else if (action.get_type() != ProcessType::Elastic) {
+      /* Only elastic collisions can happen between core and corona particles
+       * (1→N can still happen) */
+      const bool all_core_in_incoming =
+          std::all_of(incoming.begin(), incoming.end(),
+                      [](const ParticleData &p) { return p.is_core(); });
+      if (!all_core_in_incoming) {
+        return false;
+      }
+    }
   }
   try {
     action.generate_final_state();
@@ -2134,10 +2302,10 @@ bool Experiment<Modus>::perform_action(Action &action, int i_ensemble,
   // to signal that there was some interaction in this event
   if (modus_.is_collider()) {
     int count_target = 0, count_projectile = 0;
-    for (const auto &incoming : action.incoming_particles()) {
-      if (incoming.belongs_to() == BelongsTo::Projectile) {
+    for (const auto &p : incoming) {
+      if (p.belongs_to() == BelongsTo::Projectile) {
         count_projectile++;
-      } else if (incoming.belongs_to() == BelongsTo::Target) {
+      } else if (p.belongs_to() == BelongsTo::Target) {
         count_target++;
       }
     }
@@ -2156,7 +2324,7 @@ bool Experiment<Modus>::perform_action(Action &action, int i_ensemble,
   if (action.get_type() == ProcessType::Wall) {
     wall_actions_total_++;
   }
-  if (action.get_type() == ProcessType::HyperSurfaceCrossing) {
+  if (action.get_type() == ProcessType::Fluidization) {
     total_hypersurface_crossing_actions_++;
     total_energy_removed_ += action.incoming_particles()[0].momentum().x0();
   }
@@ -2175,9 +2343,9 @@ bool Experiment<Modus>::perform_action(Action &action, int i_ensemble,
   /*!\Userguide
    * \page doxypage_output_collisions_box_modus
    * \note When SMASH is running in the box modus, particle coordinates
-   * in the collision output can be out of the box. This is not an error.  Box
-   * boundary conditions are intentionally not imposed before collision output
-   * to allow unambiguous finding of the interaction point.
+   * in the collision output can be out of the box. This is not an error.
+   * Box boundary conditions are intentionally not imposed before collision
+   * output to allow unambiguous finding of the interaction point.
    * <I>Example</I>: two particles in the box have x coordinates 0.1 and
    * 9.9 fm, while box L = 10 fm. Suppose these particles collide.
    * For calculating collision the first one is wrapped to 10.1 fm.
@@ -2188,13 +2356,16 @@ bool Experiment<Modus>::perform_action(Action &action, int i_ensemble,
    * position could be either at 10 fm or at 5 fm.
    */
   for (const auto &output : outputs_) {
-    if (!output->is_dilepton_output() && !output->is_photon_output()) {
-      if (output->is_IC_output() &&
-          action.get_type() == ProcessType::HyperSurfaceCrossing) {
-        output->at_interaction(action, rho);
-      } else if (!output->is_IC_output()) {
+    if (output->is_dilepton_output() || output->is_photon_output()) {
+      continue;
+    }
+    if (output->is_IC_output()) {
+      if (action.get_type() == ProcessType::Fluidization ||
+          action.get_type() == ProcessType::FluidizationNoRemoval) {
         output->at_interaction(action, rho);
       }
+    } else {
+      output->at_interaction(action, rho);
     }
   }
 
@@ -2210,9 +2381,9 @@ bool Experiment<Modus>::perform_action(Action &action, int i_ensemble,
     /* Time in the action constructor is relative to
      * current time of incoming */
     constexpr double action_time = 0.;
-    ScatterActionPhoton photon_act(action.incoming_particles(), action_time,
-                                   n_fractional_photons_,
-                                   action.get_total_weight());
+    ScatterActionPhoton photon_act(
+        action.incoming_particles(), action_time, n_fractional_photons_,
+        action.get_total_weight(), parameters_.spin_interaction_type);
 
     /**
      * Add a completely dummy process to the photon action. The only important
@@ -2239,9 +2410,9 @@ bool Experiment<Modus>::perform_action(Action &action, int i_ensemble,
      * current time of incoming */
     constexpr double action_time = 0.;
 
-    BremsstrahlungAction brems_act(action.incoming_particles(), action_time,
-                                   n_fractional_photons_,
-                                   action.get_total_weight());
+    BremsstrahlungAction brems_act(
+        action.incoming_particles(), action_time, n_fractional_photons_,
+        action.get_total_weight(), parameters_.spin_interaction_type);
 
     /**
      * Add a completely dummy process to the bremsstrahlung action. The only
@@ -2390,6 +2561,11 @@ void Experiment<Modus>::run_time_evolution(const double t_end,
       }
     }
 
+    if (IC_dynamic_) {
+      modus_.build_fluidization_lattice(parameters_.labclock->current_time(),
+                                        ensembles_, density_param_);
+    }
+
     std::vector<Actions> actions(parameters_.n_ensembles);
     for (int i_ens = 0; i_ens < parameters_.n_ensembles; i_ens++) {
       actions[i_ens].clear();
@@ -2400,7 +2576,7 @@ void Experiment<Modus>::run_time_evolution(const double t_end,
                                 min_cell_length);
         /* For the hyper-surface-crossing actions also unformed particles are
          * searched and therefore needed on the grid. */
-        const bool include_unformed_particles = IC_output_switch_;
+        const bool include_unformed_particles = IC_switch_;
         const auto &grid =
             use_grid_ ? modus_.create_grid(ensembles_[i_ens], min_cell_length,
                                            dt, parameters_.coll_crit,
@@ -2472,7 +2648,7 @@ void Experiment<Modus>::run_time_evolution(const double t_end,
      * only in average.  If string fragmentation is on, then energy and
      * momentum are only very roughly conserved in high-energy collisions. */
     if (!potentials_ && !parameters_.strings_switch &&
-        metric_.mode_ == ExpansionMode::NoExpansion && !IC_output_switch_) {
+        metric_.mode_ == ExpansionMode::NoExpansion && !IC_switch_) {
       std::string err_msg = conserved_initial_.report_deviations(ensembles_);
       if (!err_msg.empty()) {
         logg[LExperiment].error() << err_msg;
@@ -2480,6 +2656,16 @@ void Experiment<Modus>::run_time_evolution(const double t_end,
       }
     }
   }
+
+  /* Increment once more the output clock in order to have it prepared for the
+   * final_output() call. Once close to the end time, the while-loop above to
+   * produce intermediate output is not entered as the next_output_time() is
+   * never strictly smaller than end_timestep_time (they are usually equal).
+   * Since in the final_output() function the current time of the output clock
+   * is used to produce the output, this has to be incremented before producing
+   * the final output and it makes sense to do it here.
+   */
+  ++(*parameters_.outputclock);
 
   if (pauli_blocker_) {
     logg[LExperiment].info(
@@ -2646,7 +2832,8 @@ void Experiment<Modus>::intermediate_output() {
             projectile_target_interact_[i_ens], kinematic_cuts_for_IC_output_);
 
         output->at_intermediate_time(ensembles_[i_ens], parameters_.outputclock,
-                                     density_param_, event_info);
+                                     density_param_, {event_, i_ens},
+                                     event_info);
         computational_frame_time = event_info.current_time;
       }
       // For thermodynamic output
@@ -2657,17 +2844,18 @@ void Experiment<Modus>::intermediate_output() {
       if (printout_rho_eckart_) {
         switch (dens_type_lattice_printout_) {
           case DensityType::Baryon:
-            update_lattice(jmu_B_lat_.get(), lat_upd, DensityType::Baryon,
-                           density_param_, ensembles_, false);
+            update_lattice_accumulating_ensembles(
+                jmu_B_lat_.get(), lat_upd, DensityType::Baryon, density_param_,
+                ensembles_, false);
             output->thermodynamics_output(ThermodynamicQuantity::EckartDensity,
                                           DensityType::Baryon, *jmu_B_lat_);
             output->thermodynamics_lattice_output(*jmu_B_lat_,
                                                   computational_frame_time);
             break;
           case DensityType::BaryonicIsospin:
-            update_lattice(jmu_I3_lat_.get(), lat_upd,
-                           DensityType::BaryonicIsospin, density_param_,
-                           ensembles_, false);
+            update_lattice_accumulating_ensembles(
+                jmu_I3_lat_.get(), lat_upd, DensityType::BaryonicIsospin,
+                density_param_, ensembles_, false);
             output->thermodynamics_output(ThermodynamicQuantity::EckartDensity,
                                           DensityType::BaryonicIsospin,
                                           *jmu_I3_lat_);
@@ -2677,9 +2865,9 @@ void Experiment<Modus>::intermediate_output() {
           case DensityType::None:
             break;
           default:
-            update_lattice(jmu_custom_lat_.get(), lat_upd,
-                           dens_type_lattice_printout_, density_param_,
-                           ensembles_, false);
+            update_lattice_accumulating_ensembles(
+                jmu_custom_lat_.get(), lat_upd, dens_type_lattice_printout_,
+                density_param_, ensembles_, false);
             output->thermodynamics_output(ThermodynamicQuantity::EckartDensity,
                                           dens_type_lattice_printout_,
                                           *jmu_custom_lat_);
@@ -2688,8 +2876,9 @@ void Experiment<Modus>::intermediate_output() {
         }
       }
       if (printout_tmn_ || printout_tmn_landau_ || printout_v_landau_) {
-        update_lattice(Tmn_.get(), lat_upd, dens_type_lattice_printout_,
-                       density_param_, ensembles_, false);
+        update_lattice_accumulating_ensembles(
+            Tmn_.get(), lat_upd, dens_type_lattice_printout_, density_param_,
+            ensembles_, false);
         if (printout_tmn_) {
           output->thermodynamics_output(ThermodynamicQuantity::Tmn,
                                         dens_type_lattice_printout_, *Tmn_);
@@ -2776,8 +2965,9 @@ void Experiment<Modus>::update_potentials() {
       }
     }
     if (potentials_->use_coulomb()) {
-      update_lattice(jmu_el_lat_.get(), LatticeUpdate::EveryTimestep,
-                     DensityType::Charge, density_param_, ensembles_, true);
+      update_lattice_accumulating_ensembles(
+          jmu_el_lat_.get(), LatticeUpdate::EveryTimestep, DensityType::Charge,
+          density_param_, ensembles_, true);
       for (size_t i = 0; i < EM_lat_->size(); i++) {
         ThreeVector electric_field = {0., 0., 0.};
         ThreeVector position = jmu_el_lat_->cell_center(i);
@@ -2827,17 +3017,16 @@ void Experiment<Modus>::update_potentials() {
 }
 
 template <typename Modus>
-void Experiment<Modus>::do_final_decays() {
+void Experiment<Modus>::do_final_interactions() {
   /* At end of time evolution: Force all resonances to decay. In order to handle
    * decay chains, we need to loop until no further actions occur. */
-  bool actions_performed, decays_found;
+  bool actions_performed, actions_found;
   uint64_t interactions_old;
   do {
-    decays_found = false;
+    actions_found = false;
     interactions_old = interactions_total_;
     for (int i_ens = 0; i_ens < parameters_.n_ensembles; i_ens++) {
       Actions actions;
-
       // Dileptons: shining of remaining resonances
       if (dilepton_finder_ != nullptr) {
         for (const auto &output : outputs_) {
@@ -2849,7 +3038,7 @@ void Experiment<Modus>::do_final_decays() {
         auto found_actions = finder->find_final_actions(ensembles_[i_ens]);
         if (!found_actions.empty()) {
           actions.insert(std::move(found_actions));
-          decays_found = true;
+          actions_found = true;
         }
       }
       // Perform actions.
@@ -2859,8 +3048,8 @@ void Experiment<Modus>::do_final_decays() {
     }
     actions_performed = interactions_total_ > interactions_old;
     // Throw an error if actions were found but not performed
-    if (decays_found && !actions_performed) {
-      throw std::runtime_error("Final decays were found but not performed.");
+    if (actions_found && !actions_performed) {
+      throw std::runtime_error("Final actions were found but not performed.");
     }
     // loop until no more decays occur
   } while (actions_performed);
@@ -2909,7 +3098,7 @@ void Experiment<Modus>::final_output() {
     for (const Particles &particles : ensembles_) {
       total_particles += particles.size();
     }
-    if (IC_output_switch_ && (total_particles == 0)) {
+    if (IC_switch_ && (total_particles == 0)) {
       const double initial_system_energy_plus_Pythia_violations =
           conserved_initial_.momentum().x0() + total_energy_violated_by_Pythia_;
       const double fraction_of_total_system_energy_removed =
@@ -2956,7 +3145,7 @@ void Experiment<Modus>::final_output() {
 
       if (parameters_.coll_crit == CollisionCriterion::Stochastic &&
           precent_discarded > 1.0) {
-        // The choosen threshold of 1% is a heuristical value
+        // The chosen threshold of 1% is a heuristical value
         logg[LExperiment].warn()
             << msg_discarded.str()
             << "\nThe number of discarded interactions is large, which means "
@@ -2993,9 +3182,7 @@ void Experiment<Modus>::final_output() {
       auto event_info = fill_event_info(
           ensembles_, E_mean_field, modus_.impact_parameter(), parameters_,
           projectile_target_interact_[i_ens], kinematic_cuts_for_IC_output_);
-      output->at_eventend(ensembles_[i_ens],
-                          // Pretend each ensemble is an independent event
-                          event_ * parameters_.n_ensembles + i_ens, event_info);
+      output->at_eventend(ensembles_[i_ens], {event_, i_ens}, event_info);
     }
     // For thermodynamic output
     output->at_eventend(ensembles_, event_);
@@ -3003,24 +3190,16 @@ void Experiment<Modus>::final_output() {
     // For thermodynamic lattice output
     if (printout_rho_eckart_) {
       if (dens_type_lattice_printout_ != DensityType::None) {
-        output->at_eventend(event_, ThermodynamicQuantity::EckartDensity,
-                            dens_type_lattice_printout_);
         output->at_eventend(ThermodynamicQuantity::EckartDensity);
       }
     }
     if (printout_tmn_) {
-      output->at_eventend(event_, ThermodynamicQuantity::Tmn,
-                          dens_type_lattice_printout_);
       output->at_eventend(ThermodynamicQuantity::Tmn);
     }
     if (printout_tmn_landau_) {
-      output->at_eventend(event_, ThermodynamicQuantity::TmnLandau,
-                          dens_type_lattice_printout_);
       output->at_eventend(ThermodynamicQuantity::TmnLandau);
     }
     if (printout_v_landau_) {
-      output->at_eventend(event_, ThermodynamicQuantity::LandauVelocity,
-                          dens_type_lattice_printout_);
       output->at_eventend(ThermodynamicQuantity::LandauVelocity);
     }
     if (printout_j_QBS_) {
@@ -3080,9 +3259,7 @@ void Experiment<Modus>::run() {
 
     run_time_evolution(end_time_);
 
-    if (force_decays_) {
-      do_final_decays();
-    }
+    do_final_interactions();
 
     // Output at event end
     final_output();

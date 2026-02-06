@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2015-2020
+ *    Copyright (c) 2015-2020,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -82,9 +82,7 @@ class WallCrossActionsFinder : public ActionFinderInterface {
   }
 
   /// No final actions for wall crossing
-  ActionList find_final_actions(const Particles &, bool) const override {
-    return {};
-  }
+  ActionList find_final_actions(const Particles &) const override { return {}; }
 
  private:
   /// Periods in x,y,z directions in fm.

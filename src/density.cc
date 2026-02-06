@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2013-2022
+ *    Copyright (c) 2013-2022,2024
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -213,7 +213,8 @@ void update_lattice(
     }
   }
 
-  update_lattice(lat, update, dens_type, par, ensembles, compute_gradient);
+  update_lattice_accumulating_ensembles(lat, update, dens_type, par, ensembles,
+                                        compute_gradient);
 
   // calculate the gradients for finite difference derivatives
   if (par.derivatives() == DerivativesMode::FiniteDifference) {

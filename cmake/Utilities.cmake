@@ -1,11 +1,11 @@
 ########################################################
 #
-#    Copyright (c) 2022
+#    Copyright (c) 2022,2024-2025
 #      SMASH Team
 #
 #    BSD 3-clause license
 #
-#########################################################
+########################################################
 
 # Redefine CMake message to have the possibility to suppress informational messages (not warnings,
 # errors or custom attentions)
@@ -22,6 +22,8 @@ function(message)
     )
         list(REMOVE_AT ARGV 0)
         set(_message_start_at 1)
+    elseif(_message_type MATCHES "^CONFIGURE_LOG$")
+        set(MESSAGE_QUIET ON)
     else()
         set(_message_start_at 0)
         unset(_message_type)
@@ -41,6 +43,9 @@ function(message)
         else()
             _message(${_message_type} "${_text_of_message}")
         endif()
+    endif()
+    if(_message_type MATCHES "^CONFIGURE_LOG$")
+        set(MESSAGE_QUIET OFF)
     endif()
 endfunction()
 

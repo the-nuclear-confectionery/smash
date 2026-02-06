@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2017-2023
+ *    Copyright (c) 2017-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -16,6 +16,7 @@
 #include "cxx17compat.h"
 #include "density.h"
 #include "forwarddeclarations.h"
+#include "input_keys.h"
 #include "logging.h"
 
 namespace smash {
@@ -77,63 +78,85 @@ struct OutputParameters {
         dil_extended(false),
         photons_extended(false),
         ic_extended(false),
-        rivet_parameters{} {}
+        rivet_parameters{},
+        quantities{} {}
 
   /// Constructor from configuration
   explicit OutputParameters(Configuration conf) : OutputParameters() {
     logg[LExperiment].trace(SMASH_SOURCE_LOCATION);
 
-    if (conf.has_value({"Thermodynamics"})) {
-      auto thermo_conf = conf.extract_sub_configuration({"Thermodynamics"});
-      if (thermo_conf.has_value({"Position"})) {
-        const std::array<double, 3> a = thermo_conf.take({"Position"});
+    if (conf.has_section(InputSections::o_thermodynamics)) {
+      auto thermo_conf = conf.extract_complete_sub_configuration(
+          InputSections::o_thermodynamics);
+      if (thermo_conf.has_value(InputKeys::output_thermodynamics_position)) {
+        const std::array<double, 3> a =
+            thermo_conf.take(InputKeys::output_thermodynamics_position);
         td_position = ThreeVector(a[0], a[1], a[2]);
       }
-      std::set<ThermodynamicQuantity> quan = thermo_conf.take({"Quantities"});
+      std::set<ThermodynamicQuantity> quan =
+          thermo_conf.take(InputKeys::output_thermodynamics_quantites);
       td_rho_eckart = (quan.count(ThermodynamicQuantity::EckartDensity) > 0);
       td_tmn = (quan.count(ThermodynamicQuantity::Tmn) > 0);
       td_tmn_landau = (quan.count(ThermodynamicQuantity::TmnLandau) > 0);
       td_v_landau = (quan.count(ThermodynamicQuantity::LandauVelocity) > 0);
       td_jQBS = (quan.count(ThermodynamicQuantity::j_QBS) > 0);
-      td_dens_type = thermo_conf.take({"Type"}, DensityType::Baryon);
+      td_dens_type = thermo_conf.take(InputKeys::output_thermodynamics_type);
       if (td_dens_type == DensityType::None &&
           (td_rho_eckart || td_tmn || td_tmn_landau || td_v_landau)) {
         logg[LExperiment].warn(
             "Requested Thermodynamics output with Density type None. ",
             "Change the density type to avoid output being dropped.");
       }
-      td_smearing = thermo_conf.take({"Smearing"}, true);
-      td_only_participants = thermo_conf.take({"Only_Participants"}, false);
+      td_smearing = thermo_conf.take(InputKeys::output_thermodynamics_smearing);
+      td_only_participants =
+          thermo_conf.take(InputKeys::output_thermodynamics_onlyParticipants);
     }
 
-    if (conf.has_value({"Particles"})) {
-      part_extended = conf.take({"Particles", "Extended"}, false);
-      part_only_final =
-          conf.take({"Particles", "Only_Final"}, OutputOnlyFinal::Yes);
+    /* Unconditionally take quantities from the configuration file. This is
+     * needed because the 'Format' key in the output content sub-section is
+     * taken before this object is instantiated and that might be the only
+     * present key making the sub-section disappear before the configuration is
+     * handed over to this constructor. As a positive consequence, the
+     * quantities map has always the entry set, at least to an empty list. This
+     * is assumed elsewhere in the code and it ensured here. */
+    const auto part_quantities =
+        conf.take(InputKeys::output_particles_quantities);
+    quantities.insert({"Particles", part_quantities});
+    const auto coll_quantities =
+        conf.take(InputKeys::output_collisions_quantities);
+    quantities.insert({"Collisions", coll_quantities});
+    const auto dil_quantities =
+        conf.take(InputKeys::output_dileptons_quantities);
+    quantities.insert({"Dileptons", dil_quantities});
+    const auto photons_quantities =
+        conf.take(InputKeys::output_photons_quantities);
+    quantities.insert({"Photons", photons_quantities});
+    const auto IC_quantities =
+        conf.take(InputKeys::output_initialConditions_quantities);
+    quantities.insert({"Initial_Conditions", IC_quantities});
+    /* In the same spirit, always take also other particles and collisions keys.
+     * This makes the class behaviour bounded to the key default value and not
+     * to the class member initial value. */
+    part_extended = conf.take(InputKeys::output_particles_extended);
+    part_only_final = conf.take(InputKeys::output_particles_onlyFinal);
+    coll_extended = conf.take(InputKeys::output_collisions_extended);
+    coll_printstartend = conf.take(InputKeys::output_collisions_printStartEnd);
+
+    if (conf.has_section(InputSections::o_dileptons)) {
+      dil_extended = conf.take(InputKeys::output_dileptons_extended);
     }
 
-    if (conf.has_value({"Collisions"})) {
-      coll_extended = conf.take({"Collisions", "Extended"}, false);
-      coll_printstartend = conf.take({"Collisions", "Print_Start_End"}, false);
+    if (conf.has_section(InputSections::o_photons)) {
+      photons_extended = conf.take(InputKeys::output_photons_extended);
     }
 
-    if (conf.has_value({"Dileptons"})) {
-      dil_extended = conf.take({"Dileptons", "Extended"}, false);
+    if (conf.has_section(InputSections::o_initialConditions)) {
+      ic_extended = conf.take(InputKeys::output_initialConditions_extended);
     }
 
-    if (conf.has_value({"Photons"})) {
-      photons_extended = conf.take({"Photons", "Extended"}, false);
-    }
-
-    if (conf.has_value({"Initial_Conditions"})) {
-      ic_extended = conf.take({"Initial_Conditions", "Extended"}, false);
-    }
-
-    if (conf.has_value({"Rivet"})) {
-      auto rivet_conf = conf.extract_sub_configuration({"Rivet"});
-      logg[LOutput].debug() << "Reading Rivet section from configuration:\n"
-                            << rivet_conf.to_string() << "\n";
-
+    if (conf.has_section(InputSections::o_rivet)) {
+      auto rivet_conf =
+          conf.extract_complete_sub_configuration(InputSections::o_rivet);
       /*
        * std::optional<T> can be assigned from a value using the
        *    template<class U = T> optional& operator=( U&& value );
@@ -149,76 +172,58 @@ struct OutputParameters {
        * shipped within smash namespace is then used, while in all other cases
        * std::make_optional is used.
        */
-      if (rivet_conf.has_value({"Logging"})) {
+      if (rivet_conf.has_value(InputKeys::output_rivet_logging)) {
         rivet_parameters.logs =
             make_optional<std::map<std::string, std::string>>(
-                rivet_conf.take({"Logging"}));
+                rivet_conf.take(InputKeys::output_rivet_logging));
       }
-      if (rivet_conf.has_value({"Paths"})) {
-        rivet_parameters.paths =
-            make_optional<std::vector<std::string>>(rivet_conf.take({"Paths"}));
+      if (rivet_conf.has_value(InputKeys::output_rivet_paths)) {
+        rivet_parameters.paths = make_optional<std::vector<std::string>>(
+            rivet_conf.take(InputKeys::output_rivet_paths));
       }
-      if (rivet_conf.has_value({"Preloads"})) {
+      if (rivet_conf.has_value(InputKeys::output_rivet_preloads)) {
         rivet_parameters.preloads = make_optional<std::vector<std::string>>(
-            rivet_conf.take({"Preloads"}));
+            rivet_conf.take(InputKeys::output_rivet_preloads));
       }
-      if (rivet_conf.has_value({"Analyses"})) {
+      if (rivet_conf.has_value(InputKeys::output_rivet_analyses)) {
         rivet_parameters.analyses = make_optional<std::vector<std::string>>(
-            rivet_conf.take({"Analyses"}));
+            rivet_conf.take(InputKeys::output_rivet_analyses));
       }
-      if (rivet_conf.has_value({"Cross_Section"})) {
+      if (rivet_conf.has_value(InputKeys::output_rivet_crossSection)) {
         rivet_parameters.cross_sections = make_optional<std::array<double, 2>>(
-            rivet_conf.take({"Cross_Section"}));
+            rivet_conf.take(InputKeys::output_rivet_crossSection));
       }
-      rivet_parameters.ignore_beams = rivet_conf.take({"Ignore_Beams"}, true);
-      if (rivet_conf.has_value({"Weights"})) {
+      rivet_parameters.ignore_beams =
+          rivet_conf.take(InputKeys::output_rivet_ignoreBeams);
+      if (rivet_conf.has_section(InputSections::o_r_weights)) {
         rivet_parameters.any_weight_parameter_was_given = true;
-        if (rivet_conf.has_value({"Weights", "Select"})) {
+        if (rivet_conf.has_value(InputKeys::output_rivet_weights_select)) {
           rivet_parameters.to_be_enabled_weights =
               make_optional<std::vector<std::string>>(
-                  rivet_conf.take({"Weights", "Select"}));
+                  rivet_conf.take(InputKeys::output_rivet_weights_select));
         }
-        if (rivet_conf.has_value({"Weights", "Deselect"})) {
+        if (rivet_conf.has_value(InputKeys::output_rivet_weights_deselect)) {
           rivet_parameters.to_be_disabled_weights =
               make_optional<std::vector<std::string>>(
-                  rivet_conf.take({"Weights", "Deselect"}));
+                  rivet_conf.take(InputKeys::output_rivet_weights_deselect));
         }
-        if (rivet_conf.has_value({"Weights", "Nominal"})) {
+        if (rivet_conf.has_value(InputKeys::output_rivet_weights_nominal)) {
           rivet_parameters.nominal_weight_name = make_optional<std::string>(
-              rivet_conf.take({"Weights", "Nominal"}));
+              rivet_conf.take(InputKeys::output_rivet_weights_nominal));
         }
-        if (rivet_conf.has_value({"Weights", "Cap"})) {
-          rivet_parameters.cap_on_weights =
-              make_optional<double>(rivet_conf.take({"Weights", "Cap"}));
+        if (rivet_conf.has_value(InputKeys::output_rivet_weights_cap)) {
+          rivet_parameters.cap_on_weights = make_optional<double>(
+              rivet_conf.take(InputKeys::output_rivet_weights_cap));
         }
-        if (rivet_conf.has_value({"Weights", "NLO_Smearing"})) {
+        if (rivet_conf.has_value(InputKeys::output_rivet_weights_nloSmearing)) {
           rivet_parameters.nlo_smearing = make_optional<double>(
-              rivet_conf.take({"Weights", "NLO_Smearing"}));
+              rivet_conf.take(InputKeys::output_rivet_weights_nloSmearing));
         }
-        if (rivet_conf.has_value({"Weights", "No_Multi"})) {
-          rivet_parameters.no_multi_weight =
-              make_optional<bool>(rivet_conf.take({"Weights", "No_Multi"}));
+        if (rivet_conf.has_value(InputKeys::output_rivet_weights_noMulti)) {
+          rivet_parameters.no_multi_weight = make_optional<bool>(
+              rivet_conf.take(InputKeys::output_rivet_weights_noMulti));
         }
       }
-      logg[LOutput].debug() << "After processing configuration:\n"
-                            << rivet_conf.to_string() << "\n";
-    }
-  }
-
-  /**
-   * Pass correct extended flag to binary collision output constructor
-   * \param[in] name (File)name of the output.
-   * \return Extended flag for binary output.
-   */
-  bool get_coll_extended(std::string name) const {
-    if (name == "Collisions") {
-      return coll_extended;
-    } else if (name == "Dileptons") {
-      return dil_extended;
-    } else if (name == "Photons") {
-      return photons_extended;
-    } else {
-      return false;  // error
     }
   }
 
@@ -281,6 +286,56 @@ struct OutputParameters {
 
   /// Rivet specfic parameters
   RivetOutputParameters rivet_parameters;
+
+  /**
+   * Map of quantities to be printed in the output. Keys are the different
+   * output contents. It is initialised in a way such that it is guaranteed that
+   * an entry for every content requested by the user exists. When the user
+   * requests the output content without specifying a list of quantities, the
+   * corresponding entry in the map will be an empty vector.
+   */
+  std::map<std::string, std::vector<std::string>> quantities;
+};
+
+/**
+ * Struct that holds quantities required by default output standards.
+ */
+struct OutputDefaultQuantities {
+  /// Quantities output in OSCAR2013 format
+  inline static const std::vector<std::string> oscar2013 = {
+      "t",  "x",  "y",  "z",   "mass", "p0",
+      "px", "py", "pz", "pdg", "ID",   "charge"};
+  /// Quantities output in Extended OSCAR2013 format
+  inline static const std::vector<std::string> oscar2013extended = {
+      "t",
+      "x",
+      "y",
+      "z",
+      "mass",
+      "p0",
+      "px",
+      "py",
+      "pz",
+      "pdg",
+      "ID",
+      "charge",
+      "ncoll",
+      "form_time",
+      "xsecfac",
+      "proc_id_origin",
+      "proc_type_origin",
+      "time_last_coll",
+      "pdg_mother1",
+      "pdg_mother2",
+      "baryon_number",
+      "strangeness"};
+  /// Quantities output in OSCAR1999 format
+  inline static const std::vector<std::string> oscar1999 = {
+      "id", "pdg", "0", "px", "py", "pz", "p0", "mass", "x", "y", "z", "t"};
+  /// Quantities output in initial conditions format for vHLLE
+  inline static const std::vector<std::string> ic_For_vHLLE = {
+      "tau", "x",   "y",      "eta",           "mt",         "px", "py",
+      "Rap", "pdg", "charge", "baryon_number", "strangeness"};
 };
 
 }  // namespace smash

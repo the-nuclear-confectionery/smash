@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -15,40 +15,69 @@
 #include "smash/angles.h"
 #include "smash/constants.h"
 #include "smash/fourvector.h"
+#include "smash/input_keys.h"
 #include "smash/logging.h"
+#include "smash/numerics.h"
+#include "smash/particles.h"
 #include "smash/random.h"
 #include "smash/threevector.h"
 
 namespace smash {
 static constexpr int LNucleus = LogArea::Nucleus::id;
 
-Nucleus::Nucleus(const std::map<PdgCode, int> &particle_list, int nTest) {
+Nucleus::Nucleus(const std::map<PdgCode, int> &particle_list, int nTest,
+                 SpinInteractionType spin_interaction_type) {
   fill_from_list(particle_list, nTest);
   set_parameters_automatic();
   set_saturation_density(calculate_saturation_density());
+  if (spin_interaction_type != SpinInteractionType::Off) {
+    make_nucleus_unpolarized();
+  }
 }
 
 Nucleus::Nucleus(Configuration &config, int nTest) {
+  assert(has_projectile_or_target(config));
+  const bool is_projectile = is_about_projectile(config);
+  const SpinInteractionType spin_interaction_type =
+      config.take(InputKeys::collTerm_spinInteractions);
+  const auto &[particles_key, diffusiveness_key, radius_key,
+               saturation_key] = [&is_projectile]() {
+    return is_projectile
+               ? std::make_tuple(
+                     InputKeys::modi_collider_projectile_particles,
+                     InputKeys::modi_collider_projectile_diffusiveness,
+                     InputKeys::modi_collider_projectile_radius,
+                     InputKeys::modi_collider_projectile_saturationDensity)
+               : std::make_tuple(
+                     InputKeys::modi_collider_target_particles,
+                     InputKeys::modi_collider_target_diffusiveness,
+                     InputKeys::modi_collider_target_radius,
+                     InputKeys::modi_collider_target_saturationDensity);
+  }();
   // Fill nuclei with particles.
-  std::map<PdgCode, int> part = config.take({"Particles"});
+  std::map<PdgCode, int> part = config.take(particles_key);
   fill_from_list(part, nTest);
+  if (spin_interaction_type != SpinInteractionType::Off) {
+    make_nucleus_unpolarized();
+  }
   // Look for user-defined values or take the default parameters.
-  if (config.has_value({"Diffusiveness"}) && config.has_value({"Radius"}) &&
-      config.has_value({"Saturation_Density"})) {
-    set_parameters_from_config(config);
-  } else if (!config.has_value({"Diffusiveness"}) &&
-             !config.has_value({"Radius"}) &&
-             !config.has_value({"Saturation_Density"})) {
+  const bool is_diffusiveness_given = config.has_value(diffusiveness_key),
+             is_radius_given = config.has_value(radius_key),
+             is_saturation_given = config.has_value(saturation_key);
+  if (is_diffusiveness_given && is_radius_given && is_saturation_given) {
+    diffusiveness_ = config.take(diffusiveness_key);
+    nuclear_radius_ = config.take(radius_key);
+    saturation_density_ = config.take(saturation_key);
+  } else if (!is_diffusiveness_given && !is_radius_given &&
+             !is_saturation_given) {
     set_parameters_automatic();
     set_saturation_density(calculate_saturation_density());
   } else {
     throw std::invalid_argument(
-        "Diffusiveness, Radius and Saturation_Density "
-        "required to manually configure the Woods-Saxon"
-        " distribution. Only one/two were provided. \n"
-        "Providing none of the above mentioned "
-        "parameters automatically configures the "
-        "distribution based on the atomic number.");
+        "Diffusiveness, Radius and Saturation_Density required to manually "
+        "configure the Woods-Saxon distribution. Only one or two were provided."
+        "\nProviding none of the above mentioned parameters automatically "
+        "configures the distribution based on the atomic number.");
   }
 }
 
@@ -61,11 +90,9 @@ double Nucleus::mass() const {
 }
 
 /**
- * Woods-Saxon-distribution
- * ========================
+ * <h1> Woods-Saxon-distribution </h1>
  *
- * The distribution
- * ----------------
+ * <h2> The distribution </h2>
  *
  * Nucleons in nuclei are distributed according to a
  * Woods-Saxon-distribution (see \iref{Woods:1954zz})
@@ -93,8 +120,7 @@ double Nucleus::mass() const {
  *
  * \f[p(B) = \frac{B^2}{\exp(B-R) + 1}.\f]
  *
- * Splitting it up in two regimes
- * ------------------------------
+ * <h2> Splitting it up in two regimes </h2>
  *
  * We shift the distribution so that \f$B-R\f$ is 0 at \f$t = 0\f$: \f$t
  * = B-R\f$:
@@ -135,8 +161,7 @@ double Nucleus::mass() const {
  *
  * (the tilde \f$\tilde{p}\f$ means that this is normalized).
  *
- * Four parts inside the rejection
- * -------------------------------
+ * <h2> Four parts inside the rejection </h2>
  *
  * Let \f$c_1 = 1+3/R+6/R^2+6/R^3\f$. The above means:
  *
@@ -160,7 +185,7 @@ double Nucleus::mass() const {
  * For simple distributions (only one \f$\chi\f$ involved), we invert
  * \f$t(\chi)\f$, derive it w.r.t. \f$t\f$ and normalize.
  *
- * ### Case I: \f$p^{({\rm I})}\f$
+ * <h3> Case I: \f$p^{({\rm I})}\f$ </h3>
  *
  * Simply from one random number:
  *
@@ -168,7 +193,7 @@ double Nucleus::mass() const {
  * \f[\tilde p^{({\rm I})} = \frac{3}{R^3}(t+R)^2 \mbox{ for } -R \le t
  * \le 0\f]
  *
- * ### Case II: \f$p^{({\rm II})}\f$
+ * <h3> Case II: \f$p^{({\rm II})}\f$ </h3>
  *
  * Again, from one only:
  *
@@ -176,7 +201,7 @@ double Nucleus::mass() const {
  * \f[p(t) = \frac{d\chi}{dt}\f]
  * \f[p^{({\rm II})} = e^{-t} \mbox{ for } t > 0\f]
  *
- * ### Case III: \f$p^{({\rm III})}\f$
+ * <h3> Case III: \f$p^{({\rm III})}\f$ </h3>
  *
  * Here, we need two variables:
  *
@@ -188,7 +213,7 @@ double Nucleus::mass() const {
  * \f[p^{({\rm III})} = \int_{-\infty}^{\infty} d\tau e^{-\tau} e^{-(t-\tau)}
  * \Theta(\tau) \Theta(t-\tau) = t e^{-t} \mbox{ for } t > 0\f]
  *
- * ### Case IV: \f$p^{({\rm IV})}\f$
+ * <h3> Case IV: \f$p^{({\rm IV})}\f$ </h3>
  *
  * Three variables needed:
  *
@@ -206,8 +231,7 @@ double Nucleus::mass() const {
  * \f$\tau\f$ yields \f$t\f$], integrated over all possible combinations
  * that have that property.
  *
- * From the beginning
- * ------------------
+ * <h2> From the beginning </h2>
  *
  *  So, the algorithm needs to do all this from the end:
  *
@@ -337,12 +361,55 @@ void Nucleus::set_parameters_automatic() {
   }
 }
 
-void Nucleus::set_parameters_from_config(Configuration &config) {
-  set_diffusiveness(static_cast<double>(config.take({"Diffusiveness"})));
-  set_nuclear_radius(static_cast<double>(config.take({"Radius"})));
-  // Saturation density (normalization for accept/reject sampling)
-  set_saturation_density(
-      static_cast<double>(config.take({"Saturation_Density"})));
+void Nucleus::set_orientation_from_config(Configuration &config) {
+  const bool is_projectile =
+      has_projectile_or_target(config) ? is_about_projectile(config) : true;
+  const auto &[rotation_key, theta_key, phi_key, psi_key] = [&is_projectile]() {
+    return is_projectile
+               ? std::make_tuple(
+                     InputKeys::modi_collider_projectile_orientation_randRot,
+                     InputKeys::modi_collider_projectile_orientation_theta,
+                     InputKeys::modi_collider_projectile_orientation_phi,
+                     InputKeys::modi_collider_projectile_orientation_psi)
+               : std::make_tuple(
+                     InputKeys::modi_collider_target_orientation_randRot,
+                     InputKeys::modi_collider_target_orientation_theta,
+                     InputKeys::modi_collider_target_orientation_phi,
+                     InputKeys::modi_collider_target_orientation_psi);
+  }();
+  const bool was_any_angle_provided = config.has_value(theta_key) ||
+                                      config.has_value(phi_key) ||
+                                      config.has_value(psi_key);
+  random_rotation_ = config.take(rotation_key);
+  if (random_rotation_ && was_any_angle_provided) {
+    throw std::domain_error(
+        "The random rotation of nuclei has been requested, but some specific "
+        "rotation angle is provided, too. Please specify only either of them.");
+  } else {
+    euler_theta_ = config.take(theta_key);
+    euler_phi_ = config.take(phi_key);
+    euler_psi_ = config.take(psi_key);
+  }
+}
+
+void Nucleus::rotate() {
+  if (random_rotation_) {
+    // Randomly generate euler angles for theta and phi. Psi needs not be
+    // assigned, as the nucleus objects are symmetric with respect to psi.
+    random_euler_angles();
+  }
+  if (euler_phi_ != 0.0 || euler_theta_ != 0.0 || euler_psi_ != 0.0) {
+    for (auto &particle : *this) {
+      /* Rotate every vector by the euler angles phi, theta and psi.
+       * This means applying the matrix for a rotation of phi around the z-axis,
+       * followed by the matrix for a rotation of theta around the rotated
+       * x-axis and the matrix for a rotation of psi around the rotated z-axis.
+       */
+      ThreeVector three_pos = particle.position().threevec();
+      three_pos.rotate(euler_phi_, euler_theta_, euler_psi_);
+      particle.set_3position(three_pos);
+    }
+  }
 }
 
 void Nucleus::generate_fermi_momenta() {
@@ -516,6 +583,24 @@ std::ostream &operator<<(std::ostream &out, const Nucleus &n) {
              << format(n.size(), nullptr, 17) << format(n.mass(), nullptr, 13)
              << format(n.get_nuclear_radius(), nullptr, 14)
              << format(n.get_diffusiveness(), nullptr, 20);
+}
+
+bool has_projectile_or_target(const Configuration &config) {
+  const bool is_projectile = config.has_section(InputSections::m_c_projectile);
+  const bool is_target = config.has_section(InputSections::m_c_target);
+  return is_projectile || is_target;
+}
+
+bool is_about_projectile(const Configuration &config) {
+  const bool is_projectile = config.has_section(InputSections::m_c_projectile);
+  const bool is_target = config.has_section(InputSections::m_c_target);
+  if (is_projectile == is_target) {
+    throw std::logic_error(
+        "Error parsing configuration of EITHER projectile OR target.\n"
+        "Configuration tested for it contains the following:\n------------\n" +
+        config.to_string() + "\n------------\n");
+  }
+  return is_projectile;
 }
 
 }  // namespace smash

@@ -3,7 +3,17 @@
 Information about Docker can be found on the [Docker official page](https://docs.docker.com/).
 The links to download Docker for Linux, Mac and Windows10 are also [officially available](https://www.docker.com/get-started).
 The instructions to build SMASH are written in the file _Dockerfile_ and, apart from the different syntax, the procedure is the same as in the case of Singularity (see [following section](#docker-to-singularity)).
-As explained in the [SMASH README file](../README.md), Docker images are provided as [packages in the Github organisation](https://github.com/orgs/smash-transport/packages) and can be pulled from there and directly run. 
+As explained in the [SMASH README file](../README.md), Docker images are provided as [packages in the Github organisation](https://github.com/orgs/smash-transport/packages) and can be pulled from there and directly run.
+
+### Inspecting images
+
+The `docker inspect` command can be used to retrieve information from the image itself.
+The `SMASH-max` image contains lots of auxiliary software and it might be useful to know which versions of third-party libraries have been installed.
+Use the command
+```console
+docker inspect -f '{{index .Config.Labels "installed.software.versions" }}' <tag_name>
+```
+to obtain a ` | ` separated list of the installed software version.
 
 ### Building a Docker image for SMASH
 
@@ -74,6 +84,14 @@ docker run -it -v path/to/smash/repo:/SMASH/smash_local  <image_id or tag>
 ```
 This creates the directory `/SMASH/smash_local` which matches the smash directory.
 All local changes will be reflected in this directory and SMASH can be build with those changes in the container.
+However, sometimes writing error permissions might occur, usually because the container user ID differs from the host one.
+You can make them match via
+```console
+docker run -it -u $(id -u) -v path/to/smash/repo:/SMASH/smash_local <image_id or tag>
+```
+but this will not give you total freedom in the container (basically you will not be root and you will not be able to change any root-owned file).
+If you are interested in more information and more advanced workarounds, you can refer to [this nice blog page](https://jtreminio.com/blog/running-docker-containers-as-current-host-user/).
+
 
 
 <a id="docker-to-singularity"></a>

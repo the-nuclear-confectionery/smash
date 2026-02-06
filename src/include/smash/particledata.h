@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2012-2020,2022-2024
+ *    Copyright (c) 2012-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -8,6 +8,7 @@
 #define SRC_INCLUDE_SMASH_PARTICLEDATA_H_
 
 #include <limits>
+#include <utility>
 
 #include "forwarddeclarations.h"
 #include "fourvector.h"
@@ -40,7 +41,7 @@ struct HistoryData {
    * time of the particle, since only formed particles can freeze out
    * The full coordinate space 4-vector can be obtained by back-propagation
    */
-  double time_last_collision = 0.0;
+  double time_last_collision = smash_NaN<double>;
   /// PdgCode of the first parent particles
   PdgCode p1 = 0x0;
   /// PdgCode of the second parent particles
@@ -108,6 +109,9 @@ class ParticleData {
   /// \copydoc PdgCode::is_pion
   bool is_pion() const { return pdgcode().is_pion(); }
 
+  /// \copydoc PdgCode::is_Sigmastar
+  bool is_sigmastar() const { return pdgcode().is_Sigmastar(); }
+
   /**
    * Get the particle's pole mass ("on-shell").
    * \return pole mass of the particle [GeV]
@@ -138,6 +142,15 @@ class ParticleData {
    */
   HistoryData get_history() const { return history_; }
   /**
+   * Set history_ from rvalue reference. Meant to be used only in
+   * special situations e.g. in the ListModus, where a temporary HistoryData
+   * is constructed from the user input.
+   *
+   * \param[in] history object to be moved from.
+   */
+  void set_history(HistoryData &&history) { history_ = std::move(history); }
+
+  /**
    * Store history information
    *
    * The history contains the type of process and possibly the
@@ -146,10 +159,10 @@ class ParticleData {
    * \param[in] ncoll particle's number of collisions
    * \param[in] pid id of the particle's latest process
    * \param[in] pt process type of the particle's latest process
-   * \param[in] time_of_or time of latest collision [fm]
+   * \param[in] time_last_coll time of latest collision [fm]
    * \param[in] plist list of parent particles */
-  void set_history(int ncoll, uint32_t pid, ProcessType pt, double time_of_or,
-                   const ParticleList &plist);
+  void set_history(int ncoll, uint32_t pid, ProcessType pt,
+                   double time_last_coll, const ParticleList &plist);
 
   /**
    * Get the particle's 4-momentum
@@ -248,10 +261,14 @@ class ParticleData {
    * of time.
    * \param[in] form_time absolute formation time
    */
-  void set_formation_time(const double &form_time) {
+  void set_formation_time(double form_time) {
     formation_time_ = form_time;
     // cross section scaling factor will be a step function in time
     begin_formation_time_ = form_time;
+    // if time of the last collision is NaN set it to the formation time
+    if (std::isnan(history_.time_last_collision)) {
+      history_.time_last_collision = form_time;
+    }
   }
   /**
    * Set the time, when the cross section scaling factor begins, and finishes
@@ -265,6 +282,9 @@ class ParticleData {
   void set_slow_formation_times(double begin_form_time, double form_time) {
     begin_formation_time_ = begin_form_time;
     formation_time_ = form_time;
+    if (std::isnan(history_.time_last_collision)) {
+      history_.time_last_collision = form_time;
+    }
   }
 
   /**
@@ -332,11 +352,73 @@ class ParticleData {
   void boost_momentum(const ThreeVector &v) {
     set_4momentum(momentum_.lorentz_boost(v));
   }
+  /**
+   * Get the (maximum positive) spin s of a particle in multiples of 1/2.
+   * E.g. for a spin-1 particle s=2.
+   * \return particle's spin in multiples of 1/2
+   */
+  int spin() const { return pdgcode().spin(); }
+  /**
+   * Get the mean spin 4-vector (Pauli–Lubanski vector) of the particle (const
+   * reference, no copy). \return particle's mean spin 4-vector
+   */
+  const FourVector &spin_vector() const { return spin_vector_; }
+  /**
+   * Get the mean spin 4-vector (Pauli–Lubanski vector) of the particle (non
+   * const reference). \return particle's mean spin 4-vector
+   */
+  FourVector &spin_vector() { return spin_vector_; }
+  /**
+   * Set the mean spin 4-vector (Pauli–Lubanski vector) of the particle.
+   * \param[in] s particle's mean spin 4-vector
+   */
+  void set_spin_vector(const FourVector &s) { spin_vector_ = s; }
+  /**
+   * Set a single component of the mean spin 4-vector (Pauli-Lubanski vector).
+   * \param[in] index component index (0-3)
+   * \param[in] value component value
+   */
+  void set_spin_vector_component(int index, double value) {
+    if (index < 0 || index > 3) {
+      throw std::out_of_range("Invalid spin vector component index");
+    }
+    spin_vector_[index] = value;
+  }
 
+  /**
+   * Set the 4 components of the spin vector such that the particle is
+   * unpolarized. This function is used only to initialize the spin vector of
+   * particles at creation.
+   */
+  void set_unpolarized_spin_vector();
   /// Setter for belongs_to label
   void set_belongs_to(BelongsTo label) { belongs_to_ = label; }
   /// Getter for belongs_to label
   BelongsTo belongs_to() const { return belongs_to_; }
+
+  /// Fluidize the particle
+  void fluidize() { core_ = true; }
+  /// Check whether the particle is core
+  bool is_core() const { return core_; }
+  /// Particle \f$tau\f$ (hyperbolic time)
+  double hyperbolic_time() const { return position_.tau(); }
+  /// Particle spacetime rapidity \f$\eta_s\f$
+  double spatial_rapidity() const { return position_.eta(); }
+  /// Particle \f$m_T\f$
+  double transverse_mass() const { return momentum_.tau(); }
+  /// Particle momentum rapidity \f$y_\mathrm{rap}\f$
+  double rapidity() const { return momentum_.eta(); }
+
+  /**
+   * Set the perturbative weight
+   */
+  void set_perturbative_weight(const double weight) {
+    perturbative_weight_ = weight;
+  }
+  /**
+   * Get the perturbative weight
+   */
+  double perturbative_weight() const { return perturbative_weight_; }
 
   /**
    * Check whether two particles have the same id
@@ -403,10 +485,13 @@ class ParticleData {
     dst.history_ = history_;
     dst.momentum_ = momentum_;
     dst.position_ = position_;
+    dst.spin_vector_ = spin_vector_;
     dst.formation_time_ = formation_time_;
     dst.initial_xsec_scaling_factor_ = initial_xsec_scaling_factor_;
     dst.begin_formation_time_ = begin_formation_time_;
     dst.belongs_to_ = belongs_to_;
+    dst.core_ = core_;
+    dst.perturbative_weight_ = perturbative_weight_;
   }
 
   /**
@@ -449,21 +534,35 @@ class ParticleData {
    */
   bool hole_ = false;
 
+  /// If the particle is part of a pseudofluid.
+  // A particle cannot be un-core, and any children it produces inherits
+  // this trait.
+  bool core_ = false;
+
   /// momenta of the particle: x0, x1, x2, x3 as E, px, py, pz
   FourVector momentum_;
   /// position in space: x0, x1, x2, x3 as t, x, y, z
   FourVector position_;
+  /**
+   * Pauli-Lubanski vector (mean spin 4-vector) of the particle. Each
+   * component is initialized with NaN (double) to indicate that the spin vector
+   * has not been set.
+   */
+  FourVector spin_vector_ = FourVector(smash_NaN<double>, smash_NaN<double>,
+                                       smash_NaN<double>, smash_NaN<double>);
   /** Formation time at which the particle is fully formed
    *  given as an absolute value in the computational frame
    */
-  double formation_time_ = 0.0;
+  double formation_time_ = smash_NaN<double>;
   /// time when the cross section scaling factor starts to increase to 1
-  double begin_formation_time_ = 0.0;
+  double begin_formation_time_ = smash_NaN<double>;
   /**
    * Initial cross section scaling factor.
    * 1 by default, since a particle is fully formed in this case.
    */
   double initial_xsec_scaling_factor_ = 1.0;
+  /// Perturbative weight attributed to heavy flavor particles
+  double perturbative_weight_ = 1.0;
   /// history information
   HistoryData history_;
   /// is it part of projectile or target nuclei?

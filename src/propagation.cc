@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2015-2023
+ *    Copyright (c) 2015-2023,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -83,6 +83,26 @@ double propagate_straight_line(Particles *particles, double to_time,
   return dt;
 }
 
+void backpropagate_straight_line(Particles *particles, double to_time) {
+  bool positive_dt_error = false;
+  for (ParticleData &data : *particles) {
+    const double t = data.position().x0();
+    if (t < to_time && !positive_dt_error) {
+      // Print error message once, not for every particle
+      positive_dt_error = true;
+      logg[LPropagation].error(
+          to_time,
+          " in backpropagate_straight_line is after the earliest particle.");
+    }
+    assert(t >= to_time);
+    const double dt = to_time - t;
+    const ThreeVector r = data.position().threevec() + dt * data.velocity();
+    data.set_4position(FourVector(to_time, r));
+    data.set_formation_time(t);
+    data.set_cross_section_scaling_factor(0.0);
+  }
+}
+
 void expand_space_time(Particles *particles,
                        const ExperimentParameters &parameters,
                        const ExpansionProperties &metric) {
@@ -159,26 +179,24 @@ void update_momenta(
         FB = std::make_pair(std::get<0>(tmp), std::get<1>(tmp));
         FI3 = std::make_pair(std::get<2>(tmp), std::get<3>(tmp));
       }
-      /* Floating point traps should be raised if the force is not overwritten
-       * with a meaningful value */
-      const auto sNaN = std::numeric_limits<double>::signaling_NaN();
-      ThreeVector force(sNaN, sNaN, sNaN);
-      if (pot.use_momentum_dependence()) {
-        ThreeVector energy_grad = pot.single_particle_energy_gradient(
-            jB_lat, data.position().threevec(), data.momentum().threevec(),
-            data.effective_mass(), plist);
-        force = -energy_grad * scale.first;
-        force +=
-            scale.second * data.type().isospin3_rel() *
-            (FI3.first + data.momentum().velocity().cross_product(FI3.second));
-      } else {
-        force = scale.first *
-                    (FB.first +
-                     data.momentum().velocity().cross_product(FB.second)) +
-                scale.second * data.type().isospin3_rel() *
-                    (FI3.first +
-                     data.momentum().velocity().cross_product(FI3.second));
-      }
+      ThreeVector force = std::invoke([&]() {
+        if (pot.use_momentum_dependence()) {
+          const ThreeVector energy_grad = pot.single_particle_energy_gradient(
+              jB_lat, data.position().threevec(), data.momentum().threevec(),
+              data.effective_mass(), plist);
+          return -energy_grad * scale.first +
+                 scale.second * data.type().isospin3_rel() *
+                     (FI3.first +
+                      data.momentum().velocity().cross_product(FI3.second));
+        } else {
+          return scale.first *
+                     (FB.first +
+                      data.momentum().velocity().cross_product(FB.second)) +
+                 scale.second * data.type().isospin3_rel() *
+                     (FI3.first +
+                      data.momentum().velocity().cross_product(FI3.second));
+        }
+      });
       // Potentially add Lorentz force
       if (pot.use_coulomb() && EM_lat->value_at(r, EM_fields)) {
         // factor hbar*c to convert fields from 1/fm^2 to GeV/fm

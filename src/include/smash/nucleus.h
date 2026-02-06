@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2014-2022
+ *    Copyright (c) 2014-2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -47,8 +47,11 @@ class Nucleus {
    * \param[in] particle_list std::map, which maps PdgCode and count
    * of this particle.
    * \param[in] nTest Number of test particles.
+   * \param[in] spin_interaction_type whether to use spin interactions.
    */
-  Nucleus(const std::map<PdgCode, int> &particle_list, int nTest);
+  Nucleus(const std::map<PdgCode, int> &particle_list, int nTest,
+          SpinInteractionType spin_interaction_type = SpinInteractionType::Off);
+
   virtual ~Nucleus() = default;
 
   /**
@@ -87,14 +90,6 @@ class Nucleus {
    * \iref{Loizides:2017ack}).
    */
   virtual void set_parameters_automatic();
-
-  /**
-   * Sets the parameters of the Woods-Saxon according to
-   * manually added values in the configuration file.
-   *
-   * \param config The configuration for this nucleus (projectile or target).
-   */
-  virtual void set_parameters_from_config(Configuration &config);
 
   /**
    * Generates momenta according to Fermi motion for the nucleons.
@@ -141,10 +136,9 @@ class Nucleus {
   void shift(double z_offset, double x_offset, double simulation_time);
 
   /**
-   * Rotates the nucleus. (Due to spherical symmetry of nondeformed nuclei,
-   * there is nothing to do.)
+   * Rotates the nucleus using the three euler angles phi, theta and psi.
    */
-  virtual void rotate() {}
+  virtual void rotate();
 
   /**
    * Copies the particles from this nucleus into the particle list.
@@ -283,6 +277,13 @@ class Nucleus {
   /// Number of testparticles per physical particle
   size_t testparticles_ = 1;
 
+  /// Set unpolarized spin vectors for all particles in the nucleus
+  void make_nucleus_unpolarized() {
+    for (auto &particle : particles_) {
+      particle.set_unpolarized_spin_vector();
+    }
+  }
+
  protected:
   /// Particles associated with this nucleus.
   std::vector<ParticleData> particles_;
@@ -297,12 +298,18 @@ class Nucleus {
    */
   void random_euler_angles();
 
-  /// Euler angel phi
-  double euler_phi_;
-  /// Euler angel theta
-  double euler_theta_;
-  /// Euler angel psi
-  double euler_psi_;
+  /**
+   * The Euler angle phi of the three Euler angles used to apply rotations to
+   * the nucleus. We do not use the \c Angles class here to keep a clear
+   * distinction between spherical coordinates and angles for rotations.
+   */
+  double euler_phi_ = 0.0;
+  /// Euler angle theta
+  double euler_theta_ = 0.0;
+  /// Euler angle psi
+  double euler_psi_ = 0.0;
+  /// Whether the nucleus should be rotated randomly.
+  bool random_rotation_ = false;
 
  public:
   /// For iterators over the particle list:
@@ -363,11 +370,34 @@ class Nucleus {
    */
   inline double get_nuclear_radius() const { return nuclear_radius_; }
   /**
+   * Set angles for rotation of the nucleus from config file.
+   * \param[in] orientation_config The configuration for the rotation of this
+   * nucleus (projectile or target).
+   */
+  void set_orientation_from_config(Configuration &orientation_config);
+  /**
    * \ingroup logging
    * Writes the state of the Nucleus object to the output stream.
    */
   friend std::ostream &operator<<(std::ostream &, const Nucleus &);
 };
+
+/**
+ * Find out whether a configuration has a projectile or a target sub-section.
+ *
+ * \param config The configuration to be checked.
+ */
+bool has_projectile_or_target(const Configuration &config);
+
+/**
+ * Find out whether a configuration is about projectile or target.
+ *
+ * \param config The configuration to be checked.
+ *
+ * \throw An \c std::logic_error if there is neither a projectile nor a target
+ * subsection or if both are present.
+ */
+bool is_about_projectile(const Configuration &config);
 
 }  // namespace smash
 

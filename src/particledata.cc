@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -9,6 +9,7 @@
 
 #include "smash/particledata.h"
 
+#include <cassert>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -34,7 +35,7 @@ double ParticleData::effective_mass() const {
 void ParticleData::set_history(int ncoll, uint32_t pid, ProcessType pt,
                                double time_last_coll,
                                const ParticleList &plist) {
-  if (pt != ProcessType::Wall) {
+  if ((pt != ProcessType::Wall) && (pt != ProcessType::FluidizationNoRemoval)) {
     history_.collisions_per_particle = ncoll;
     history_.time_last_collision = time_last_coll;
   }
@@ -48,10 +49,11 @@ void ParticleData::set_history(int ncoll, uint32_t pid, ProcessType pt,
       history_.p2 = 0x0;
       break;
     case ProcessType::Elastic:
-    case ProcessType::HyperSurfaceCrossing:
     case ProcessType::FailedString:
+    case ProcessType::Fluidization:
+    case ProcessType::FluidizationNoRemoval:
       // Parent particles are not updated by the elastic scatterings,
-      // hypersurface crossings or failed string processes
+      // failed string processes, or fluidizations
       break;
     case ProcessType::TwoToOne:
     case ProcessType::TwoToTwo:
@@ -83,7 +85,50 @@ void ParticleData::set_history(int ncoll, uint32_t pid, ProcessType pt,
   }
 }
 
+void ParticleData::set_unpolarized_spin_vector() {
+  // For massless particles, a rest frame does not exist,
+  // so the spin 4-vector cannot be defined via a rest-frame boost.
+  // In such cases, we assign a vanishing spin vector to ensure
+  // numerical stability and well-defined behavior.
+  // For spin-0 particles, the spin 4-vector is physically zero
+  if (pole_mass() == 0.0 || spin() == 0) {
+    spin_vector_ = FourVector(0., 0., 0., 0.);
+    return;
+  }
+
+  // Check whether the velocity of a particle is set and not nan
+  const ThreeVector v = velocity();
+  assert(!(std::isnan(v.x1()) || std::isnan(v.x2()) || std::isnan(v.x3())));
+
+  /**
+   * For finite-spin particles, we assign unpolarized spin vectors by sampling
+   * the spatial components from a normal distribution with mean 0 in the
+   * particle rest frame, ensuring ⟨S⟩ = 0 on average. The time component S⁰ is
+   * set to 0. The resulting spin vector is then Lorentz-boosted to the lab
+   * frame.
+   *
+   * This initialization is not physical spin quantization, but a statistically
+   * unpolarized setup. The standard deviation is arbitrary and chosen small to
+   * avoid unphysical artifacts.
+   */
+  constexpr double mean = 0.0;
+  constexpr double sigma = 0.75;
+
+  const FourVector rest_frame_spin(0., random::normal(mean, sigma),
+                                   random::normal(mean, sigma),
+                                   random::normal(mean, sigma));
+
+  // Boost the spin vector from rest frame to lab frame
+  spin_vector_ = rest_frame_spin.lorentz_boost(v);
+}
+
 double ParticleData::xsec_scaling_factor(double delta_time) const {
+  // if formation times are NaNs simply return a NaN to avoid floating-point
+  // FE_INVALID errors (that would be raised by unordered comparisons with NaNs)
+  if (std::isnan(formation_time_) || std::isnan(begin_formation_time_)) {
+    return smash_NaN<double>;
+  }
+
   double time_of_interest = position_.x0() + delta_time;
   // cross section scaling factor at the time_of_interest
   double scaling_factor;

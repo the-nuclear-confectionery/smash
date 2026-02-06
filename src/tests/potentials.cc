@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -11,10 +11,12 @@
 
 #include "smash/potentials.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "setup.h"
 #include "smash/algorithms.h"
@@ -101,12 +103,14 @@ TEST(nucleus_potential_profile) {
   )"};
   conf.validate();
   ExperimentParameters param = smash::Test::default_parameters();
-  ColliderModus c(conf.extract_sub_configuration({"Modi"}), param);
+  ColliderModus c(conf.extract_complete_sub_configuration(InputSections::modi),
+                  param);
   std::vector<Particles> P(1);
   c.initial_conditions(&(P[0]), param);
   ParticleList plist;
-  Potentials pot =
-      Potentials(conf.extract_sub_configuration({"Potentials"}), param);
+  Potentials pot = Potentials(
+      conf.extract_complete_sub_configuration(InputSections::potentials),
+      param);
 
   // Write potential XY map in a vtk output
   ThreeVector r;
@@ -293,12 +297,13 @@ TEST(ensembles_vs_testparticles) {
   }
 
   const char* conf_pot{R"(
-    Skyrme:
-        Skyrme_A: -209.2
-        Skyrme_B: 156.4
-        Skyrme_Tau: 1.35
-    Symmetry:
-        S_Pot: 18.0
+    Potentials:
+      Skyrme:
+          Skyrme_A: -209.2
+          Skyrme_B: 156.4
+          Skyrme_Tau: 1.35
+      Symmetry:
+          S_Pot: 18.0
   )"};
   Configuration conf1{conf_pot}, conf2{conf_pot};
   ExperimentParameters param1 = smash::Test::default_parameters(),
@@ -375,20 +380,22 @@ TEST(energy_gradient_vs_pot_gradient) {
   ExperimentParameters exp_par = Test::default_parameters();
   exp_par.testparticles = 50;
   DensityParameters denspar(exp_par);
-  update_lattice(lat.get(), LatticeUpdate::EveryTimestep, DensityType::Baryon,
-                 denspar, ensembles, true);
+  update_lattice_accumulating_ensembles(lat.get(), LatticeUpdate::EveryTimestep,
+                                        DensityType::Baryon, denspar, ensembles,
+                                        true);
   DensityOnLattice jB = (*lat)[lat->index1d(
       ncells[0] / 2, ncells[1] / 2,
       ncells[2] / 2)];  // density in the center (int division intended)
   // set up a potentials object without momentum dependence
   const char* conf_pot{R"(
-    Skyrme:
-        Skyrme_A: -209.2
-        Skyrme_B: 156.4
-        Skyrme_Tau: 1.35
-    Momentum_Dependence:
-        C: 0.0
-        Lambda: 2.13
+    Potentials:
+      Skyrme:
+          Skyrme_A: -209.2
+          Skyrme_B: 156.4
+          Skyrme_Tau: 1.35
+      Momentum_Dependence:
+          C: 0.0
+          Lambda: 2.13
   )"};
   Configuration conf{conf_pot};
   Potentials pot(std::move(conf), denspar);
@@ -445,16 +452,17 @@ static ExperimentParameters default_parameters_vdf(
       false, Test::no_multiparticle_reactions(),
       false,  // strings switch
       1.0, NNbarTreatment::NoAnnihilation,
-      0.,           // low energy sigma_NN cut-off
-      false,        // potential_affect_threshold
-      -1.0,         // box_length
-      200.0,        // max. cross section
-      2.5,          // fixed min. cell length
-      1.0,          // cross section scaling
-      false,        // in thermodynamics outputs spectators are included
-      false,        // do weak decays
-      true,         // can decay initial particles
-      std::nullopt  // use monash tune, not known
+      0.,     // low energy sigma_NN cut-off
+      false,  // potential_affect_threshold
+      -1.0,   // box_length
+      200.0,  // max. cross section
+      2.5,    // fixed min. cell length
+      1.0,    // cross section scaling
+      false,  // in thermodynamics outputs spectators are included
+      false,  // do non-strong decays
+      true,   // can decay initial particles
+      SpinInteractionType::Off,  // no spin interactions
+      std::nullopt               // use monash tune, not known
   };
 }
 
@@ -477,10 +485,11 @@ TEST(vdf_chain_rule_derivatives_vs_vdf_direct_derivatives) {
   const int Ntest = 1000;
   // initialize the experiment parameters and potentials
   Configuration conf{R"(
-    VDF:
-      Sat_rhoB: 0.168
-      Powers: [2.0, 2.35]
-      Coeffs: [-209.2, 156.5]
+    Potentials:
+      VDF:
+        Sat_rhoB: 0.168
+        Powers: [2.0, 2.35]
+        Coeffs: [-209.2, 156.5]
   )"};
   ExperimentParameters param = default_parameters_vdf(Ntest);
   Potentials pot(std::move(conf), param);
@@ -498,7 +507,7 @@ TEST(vdf_chain_rule_derivatives_vs_vdf_direct_derivatives) {
 
   // calculate how many particles of one type are needed in a cubic space of
   // given length to reproduce this density profile
-  const int N = rho_avg * length * length * length;
+  const int N = numeric_cast<int>(rho_avg * length * length * length);
 
   // generate numbers uniformly on the intervals (0,1) and (0, length)
   auto uniform_one = random::make_uniform_distribution(0.0, 1.0);
@@ -686,17 +695,19 @@ TEST(skyrme_vs_vdf_wo_lattice) {
   const int Ntest = 1000;
   // initialize the experiment parameters and potentials
   Configuration conf_pot1{R"(
-    Skyrme:
-        Skyrme_A: -209.2
-        Skyrme_B: 156.4
-        Skyrme_Tau: 1.35
+    Potentials:
+      Skyrme:
+          Skyrme_A: -209.2
+          Skyrme_B: 156.4
+          Skyrme_Tau: 1.35
   )"};
 
   Configuration conf_pot2{R"(
-    VDF:
-      Sat_rhoB: 0.168
-      Powers: [2.0, 2.35]
-      Coeffs: [-209.2, 156.5]
+    Potentials:
+      VDF:
+        Sat_rhoB: 0.168
+        Powers: [2.0, 2.35]
+        Coeffs: [-209.2, 156.5]
   )"};
   ExperimentParameters param = default_parameters_vdf(Ntest);
   Potentials pot1(std::move(conf_pot1), param),
@@ -715,7 +726,7 @@ TEST(skyrme_vs_vdf_wo_lattice) {
 
   // calculate how many particles of one type are needed in a cubic space of
   // given length to reproduce this density profile
-  const int N = rho_avg * length * length * length;
+  const int N = numeric_cast<int>(rho_avg * length * length * length);
 
   // generate numbers uniformly on the intervals (0,1) and (0, length)
   auto uniform_one = random::make_uniform_distribution(0.0, 1.0);
@@ -817,13 +828,13 @@ static bool density_hist(Particles* P, int box_length, int cell_length,
       << "We expect the cell length of the density histogram to be a divisor "
          "of the box length. Instead we got "
       << box_length << " " << cell_length;
-  static const int num_cell = int(box_length * box_length * box_length /
-                                  (cell_length * cell_length * cell_length));
+  static const int num_cell =
+      static_cast<int>(box_length * box_length * box_length /
+                       (cell_length * cell_length * cell_length));
   // number of cells per a side of the box
   const double factor = box_length / cell_length;
 
-  double cells[num_cell];
-  memset(cells, 0, num_cell * sizeof(double));
+  std::vector<double> cells(num_cell, 0.0);
 
   int count = 0;
   // go through the particle list
@@ -833,38 +844,31 @@ static bool density_hist(Particles* P, int box_length, int cell_length,
     double x1 = it->position().x1();
     double x2 = it->position().x2();
     double x3 = it->position().x3();
-    const int index = int(floor(x1 / cell_length)) +
-                      int(floor(x2 / cell_length)) * factor +
-                      int(floor(x3 / cell_length)) * factor * factor;
+    const int index = static_cast<int>(
+        std::floor(x1 / cell_length) + std::floor(x2 / cell_length) * factor +
+        std::floor(x3 / cell_length) * factor * factor);
     // increase the local density of this cell
     cells[index] = cells[index] + 1 / (cell_length * cell_length * cell_length *
                                        saturation_density * test_p);
   }
-  double min_bound = DBL_MAX;
-  double max_bound = 0;
 
   // construct a histogram over densities, counting how many cells have density
   // that falls within density range for a given histogram bin
-  for (int i = 0; i < num_cell; i++) {
-    if (cells[i] < min_bound) {
-      min_bound = cells[i];
-    }
-    if (cells[i] > max_bound) {
-      max_bound = cells[i];
-    }
-  }
+  const auto [min_it, max_it] = std::minmax_element(cells.begin(), cells.end());
+  double min_bound = *min_it;
+  double max_bound = *max_it;
 
-  unsigned int hist_bin = ceil((max_bound - min_bound) / step);
-  min_bound = min_bound / step;
-  max_bound = max_bound / step;
-  unsigned int histogram[hist_bin + 1];
-  memset(histogram, 0, (hist_bin + 1) * sizeof(unsigned int));
+  unsigned int hist_bin =
+      numeric_cast<int>(std::ceil((max_bound - min_bound) / step));
 
-  for (int i = 0; i < num_cell; i++) {
-    // increase the histogram counter for the density of the cell
-    double position = std::max(0.0, (cells[i] / step - min_bound));
+  min_bound /= step;
+  max_bound /= step;
+  std::vector<unsigned int> histogram(hist_bin + 1, 0);
+
+  for (double c : cells) {
+    double position = std::max(0.0, (c / step - min_bound));
     position = std::min(max_bound - min_bound, position);
-    histogram[int(round(position))]++;
+    histogram[static_cast<int>(std::round(position))]++;
   }
   // get the number of cells which have the two test densities and the mean
   // density
@@ -879,8 +883,9 @@ static bool density_hist(Particles* P, int box_length, int cell_length,
   // decomposition: in a box in which the average density is mean_density, many
   // cells are expected to have a lower density test_left, and we ecpect to have
   // at least one cell with a higher density test_right
-  if (histogram[int(round(position_b))] <= histogram[int(round(position_a))] and
-      histogram[int(round(position_c))] > 0) {
+  if (histogram[static_cast<int>(round(position_b))] <=
+          histogram[static_cast<int>(round(position_a))] &&
+      histogram[static_cast<int>(round(position_c))] > 0) {
     peak_test = true;
   } else {
     std::cout << " Density histogram " << std::endl;
@@ -951,10 +956,11 @@ TEST(spinodal_dilute) {
 
   // initialize potential
   Configuration conf{R"(
-    VDF:
-      Sat_rhoB: 0.168
-      Powers: [2.0, 2.35]
-      Coeffs: [-209.2, 156.5]
+    Potentials:
+      VDF:
+        Sat_rhoB: 0.168
+        Powers: [2.0, 2.35]
+        Coeffs: [-209.2, 156.5]
   )"};
   ExperimentParameters param = default_parameters_vdf(Ntest, 0.1, 2.0);
 

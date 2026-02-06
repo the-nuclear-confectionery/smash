@@ -1,11 +1,11 @@
 ########################################################
 #
-#    Copyright (c) 2012-2023
+#    Copyright (c) 2012-2025
 #      SMASH Team
 #
 #    BSD 3-clause license
 #
-#########################################################
+########################################################
 
 include(CheckLibraryExists)
 include(AddCompilerFlag)
@@ -15,7 +15,7 @@ include(FindPkgConfig)
 # not test!
 if(CMAKE_CXX_COMPILER_ID MATCHES "^((Apple)?Clang|GNU)$")
     set(CMAKE_CXX_FLAGS
-        "${CMAKE_CXX_FLAGS} -W -Wall -Wextra -Wmissing-declarations -Wpointer-arith -Wshadow -Wuninitialized -Winit-self -Wundef -Wcast-align -Wformat=2 -Wold-style-cast -Werror=switch"
+        "${CMAKE_CXX_FLAGS} -W -Wall -Wextra -Wmissing-declarations -Wpointer-arith -Wshadow -Wuninitialized -Wfloat-conversion -Winit-self -Wundef -Wcast-align -Wformat=2 -Wold-style-cast -Werror=switch"
     )
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         set(CMAKE_CXX_FLAGS
@@ -105,7 +105,7 @@ if(TRY_USE_HEPMC OR TRY_USE_RIVET)
         add_definitions(-DSMASH_USE_HEPMC)
         if((NOT HEPMC3_ROOTIO_LIB) OR (NOT ROOT_FOUND))
             message(STATUS "HepMC3_treeroot output disabled, missing ROOT and/or "
-                           "HepMC3 ROOT Io support")
+                           "HepMC3 ROOT I/O support")
         else()
             message(STATUS "HepMC3_treeroot output support enabled")
             add_definitions(-DSMASH_USE_HEPMC_ROOTIO)
@@ -143,7 +143,7 @@ if(TRY_USE_RIVET AND HepMC3_FOUND)
 endif()
 
 # find Pythia
-find_package(Pythia 8.310 EXACT REQUIRED)
+find_package(Pythia 8.316 EXACT REQUIRED)
 if(Pythia_FOUND)
     # the BEFORE at the line below is due to
     # https://github.com/smash-transport/smash/issues/38#issuecomment-1033239643
@@ -206,21 +206,24 @@ set(smash_src
     decaymodes.cc
     decaytype.cc
     deformednucleus.cc
+    alphaclusterednucleus.cc
     density.cc
     decayactiondilepton.cc
     decayactionsfinderdilepton.cc
+    dynamicfluidfinder.cc
     distributions.cc
     energymomentumtensor.cc
     experiment.cc
     fields.cc
     file.cc
     filelock.cc
+    fluidizationaction.cc
     fourvector.cc
     fpenvironment.cc
     grandcan_thermalizer.cc
     grid.cc
     hadgas_eos.cc
-    hypersurfacecrossingaction.cc
+    hypersurfacecrossingfinder.cc
     icoutput.cc
     inputfunctions.cc
     interpolation.cc
@@ -253,6 +256,7 @@ set(smash_src
     sha256.cc
     spheremodus.cc
     stringfunctions.cc
+    stringify.cc
     tabulation.cc
     thermalizationaction.cc
     thermodynamiclatticeoutput.cc

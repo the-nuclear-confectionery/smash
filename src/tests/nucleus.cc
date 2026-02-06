@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2020,2022
+ *    Copyright (c) 2014-2020,2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -13,6 +13,7 @@
 
 #include <map>
 
+#include "smash/numeric_cast.h"
 #include "smash/particles.h"
 #include "smash/pdgcode.h"
 #include "smash/pow.h"
@@ -195,12 +196,12 @@ TEST(woods_saxon) {
   // fill the histogram
   for (int i = 0; i < N_TEST; i++) {
     ThreeVector pos = projectile.distribute_nucleon();
-    int bin = pos.abs() / dx;
+    int bin = numeric_cast<int>(std::floor(pos.abs() / dx));
     ++histogram[bin];
   }
   // We'll compare to relative values (I don't know what the integral
   // is)
-  double value_at_radius = histogram.at(R / dx);
+  double value_at_radius = histogram.at(numeric_cast<int>(std::floor(R / dx)));
   double expected_at_radius = projectile.woods_saxon(R);
   // we'll probe at these values:
   double probes[9] = {1.0,    5.0,     7.2,     8.0,    8.5,
@@ -208,7 +209,8 @@ TEST(woods_saxon) {
   // now do probe these values:
   for (int i = 0; i < 9; ++i) {
     // value we have simulated:
-    double value = histogram.at(probes[i] / dx) / value_at_radius;
+    double value = histogram.at(numeric_cast<int>(std::floor(probes[i] / dx))) /
+                   value_at_radius;
     // value we have expected:
     double expec = projectile.woods_saxon(probes[i]) / expected_at_radius;
     // standard error we expect the histogram to have is 1/sqrt(N); we
@@ -269,8 +271,7 @@ TEST(nucleon_density_norm) {
     // Transform integral from (0, oo) to (0, 1) via r = (1 - t) / t.
     const auto result = integrate(0, 1, [&](double t) {
       const double r = (1 - t) / t;
-      return 2 * twopi * square(r) * nucl.nucleon_density(r, 0., 0.) /
-             square(t);
+      return 2 * twopi * r * r * nucl.nucleon_density(r, 0., 0.) / (t * t);
     });
     std::cout << "Z: " << nucl.number_of_protons()
               << "  A: " << nucl.number_of_particles() << std::endl;
@@ -283,8 +284,7 @@ TEST(nucleon_density_norm) {
     // Transform integral from (0, oo) to (0, 1) via r = (1 - t) / t.
     const auto result = integrate(0, 1, [&](double t) {
       const double r = (1 - t) / t;
-      return 2 * twopi * square(r) * nucl.nucleon_density(r, 0., 0.) /
-             square(t);
+      return 2 * twopi * r * r * nucl.nucleon_density(r, 0., 0.) / (t * t);
     });
     std::cout << "Z: " << nucl.number_of_protons()
               << "  A: " << nucl.number_of_particles() << std::endl;
@@ -297,8 +297,7 @@ TEST(nucleon_density_norm) {
     // Transform integral from (0, oo) to (0, 1) via r = (1 - t) / t.
     const auto result = integrate(0, 1, [&](double t) {
       const double r = (1 - t) / t;
-      return 2 * twopi * square(r) * nucl.nucleon_density(r, 0., 0.) /
-             square(t);
+      return 2 * twopi * r * r * nucl.nucleon_density(r, 0., 0.) / (t * t);
     });
     std::cout << "Z: " << nucl.number_of_protons()
               << "  A: " << nucl.number_of_particles() << std::endl;

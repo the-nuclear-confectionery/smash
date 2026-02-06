@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2019-2020,2022-2023
+ *    Copyright (c) 2019-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -15,25 +15,23 @@
 #include "smash/action.h"
 
 namespace smash {
-static constexpr int LHyperSurfaceCrossing = LogArea::HyperSurfaceCrossing::id;
 
 /*!\Userguide
  * \page doxypage_output_initial_conditions
- * The ASCII initial conditions output (SMASH_IC.dat) contains a list of
- * particles on a hypersurface of constant proper time. This output is formatted
- * such that it is directly compatible with the
- * vHLLE hydrodynamics code (I. Karpenko, P. Huovinen, M.
- * Bleicher: Comput. Phys. Commun. 185, 3016 (2014)). As a consequence,
- * **spectators are not written to the ASCII IC output** as they would need to
- * be excluded anyways in order to initialize the hydrodynamics evolution. Note
- * though that for all other output formats the full particle list is printed to
- * the IC output, including spectators. The particle data is provided in the
- * computational frame. For further details, see \ref
- * doxypage_output_initial_conditions. \n
  *
- * \n
- * The ASCII initial conditions output is formatted as follows:
- * \n
+ * <h3> Output for vHLLE </h3>
+ * The "For_vHLLE" initial conditions output **SMASH_IC_For_vHLLE.dat** contains
+ * a list of particles on a hypersurface of constant proper time. This output is
+ * formatted such that it is directly compatible with the vHLLE hydrodynamics
+ * code \iref{Karpenko:2013wva}. As a consequence, **spectators are not written
+ * to the IC output** as they would need to be excluded anyways in order to
+ * initialize the hydrodynamics evolution. Note though that for all other output
+ * formats the full particle list is printed to the IC output, including
+ * spectators. The particle data is provided in the computational frame. For
+ * further details, see \ref doxypage_input_conf_modi_C_initial_conditions. \n
+ *
+ * The "For_vHLLE" initial conditions output is formatted as follows:
+ *
  * **Header**
  * \code
  * # **smash_version** initial conditions: hypersurface of constant proper time
@@ -48,18 +46,20 @@ static constexpr int LHyperSurfaceCrossing = LogArea::HyperSurfaceCrossing::id;
  *
  * **Output block header**
  *
- * The ASCII initial conditions output is, similar to the OSCAR output, based on
- * a block structure, where each block consists of 1 event. The header for a
- * new event is structured as follows:
+ * The initial conditions output for vHLLE is, similar to the OSCAR output,
+ * based on a block structure, where each block consists of 1 event (multiple
+ * ensembles, if used, are separated as well). The header for a new event is
+ * structured as follows:
  * \code
- * # event ev_num start
+ * # event ev_num ensemble ens_num start
  * \endcode
  * where
  * \li \key ev_num: The number of the current event
+ * \li \key ens_num: The number of the current ensemble
  *
- * Note that 'event' and 'start' are no variables, but words that are
- * printed in the header. \n
- * \n
+ * Note that 'event', 'ensemble' and 'start' are not variables, but words that
+ * are printed in the header.
+ *
  * **Particle line**
  *
  * The particle lines are formatted as follows:
@@ -84,80 +84,71 @@ static constexpr int LHyperSurfaceCrossing = LogArea::HyperSurfaceCrossing::id;
  *
  * The end of an event is indicated by the following line:
  * \code
- * # event ev_num end
+ * # event ev_num ensemble ens_num end
  * \endcode
  * where
  * \li \key ev_num: The number of the current event
+ * \li \key ens_num: The number of the current ensemble
  *
- * Note that 'event' and 'end' are no variables, but words that are
- * printed in the header. \n
+ * Note that 'event', 'ensemble' and 'start' are not variables, but words that
+ * are printed in the header.
  *
  * \note
  * If SMASH is run with test particles (necessary e.g. for potentials), the
- * ASCII output will contain Ntest * Npart particle entries. Remember to weigh
+ * output will contain Ntest * Npart particle entries. Remember to weigh
  * each of those particles with 1/Ntest.
  */
 
 ICOutput::ICOutput(const std::filesystem::path &path, const std::string &name,
                    const OutputParameters &out_par)
     : OutputInterface(name),
-      file_{path / "SMASH_IC.dat", "w"},
-      out_par_(out_par) {
+      file_{path / "SMASH_IC_For_vHLLE.dat", "w"},
+      out_par_(out_par),
+      formatter_{OutputDefaultQuantities::ic_For_vHLLE} {
   std::fprintf(
       file_.get(),
       "# %s initial conditions: hypersurface of constant proper time\n",
       SMASH_VERSION);
-  std::fprintf(file_.get(),
-               "# tau x y eta mt px py Rap pdg charge "
-               "baryon_number strangeness\n");
-  std::fprintf(file_.get(),
-               "# fm fm fm none GeV GeV GeV none none e "
-               "none none\n");
+  std::fprintf(file_.get(), "# %s", formatter_.quantities_line().c_str());
+  std::fprintf(file_.get(), "# %s", formatter_.unit_line().c_str());
 }
 
 ICOutput::~ICOutput() {}
 
-void ICOutput::at_eventstart(const Particles &, const int event_number,
-                             const EventInfo &) {
-  std::fprintf(file_.get(), "# event %i start\n", event_number);
+void ICOutput::at_eventstart(const Particles &, const EventLabel &event_label,
+                             const EventInfo &event) {
+  if (event.n_ensembles != 1) {
+    throw std::logic_error(
+        "ICOutput shouldn't be used with multiple parallel ensembles.");
+  }
+  std::fprintf(file_.get(), "# event %i ensemble %i start\n",
+               event_label.event_number, event_label.ensemble_number);
 }
 
-void ICOutput::at_eventend(const Particles &particles, const int event_number,
+void ICOutput::at_eventend([[maybe_unused]] const Particles &particles,
+                           const EventLabel &event_label,
                            const EventInfo &event) {
-  std::fprintf(file_.get(), "# event %i end\n", event_number);
-
-  // If the runtime is too short some particles might not yet have
-  // reached the hypersurface. Warning is printed.
-  if (particles.size() != 0 && !event.impose_kinematic_cut_for_SMASH_IC) {
-    logg[LHyperSurfaceCrossing].warn(
-        "End time might be too small for initial conditions output. "
-        "Hypersurface has not yet been crossed by ",
-        particles.size(), " particle(s).");
+  if (event.n_ensembles != 1) {
+    throw std::logic_error(
+        "ICOutput shouldn't be used with multiple parallel ensembles.");
   }
+  std::fprintf(file_.get(), "# event %i ensemble %i end\n",
+               event_label.event_number, event_label.ensemble_number);
 }
 
 void ICOutput::at_intermediate_time(const Particles &,
                                     const std::unique_ptr<Clock> &,
                                     const DensityParameters &,
-                                    const EventInfo &) {
+                                    const EventLabel &, const EventInfo &) {
   // Dummy, but virtual function needs to be declared.
 }
 
 void ICOutput::at_interaction(const Action &action, const double) {
-  assert(action.get_type() == ProcessType::HyperSurfaceCrossing);
+  assert(action.get_type() == ProcessType::Fluidization ||
+         action.get_type() == ProcessType::FluidizationNoRemoval);
   assert(action.incoming_particles().size() == 1);
 
-  ParticleData particle = action.incoming_particles()[0];
-
-  // transverse mass
-  const double m_trans =
-      std::sqrt(particle.effective_mass() * particle.effective_mass() +
-                particle.momentum()[1] * particle.momentum()[1] +
-                particle.momentum()[2] * particle.momentum()[2]);
-  // momentum space rapidity
-  const double rapidity =
-      0.5 * std::log((particle.momentum()[0] + particle.momentum()[3]) /
-                     (particle.momentum()[0] - particle.momentum()[3]));
+  const ParticleData &particle = action.incoming_particles()[0];
 
   // Determine if particle is spectator:
   // Fulfilled if particle is initial nucleon, aka has no prior interactions
@@ -165,21 +156,16 @@ void ICOutput::at_interaction(const Action &action, const double) {
 
   // write particle data excluding spectators
   if (!is_spectator) {
-    std::fprintf(file_.get(), "%g %g %g %g %g %g %g %g %s %i %i %i \n",
-                 particle.position().tau(), particle.position()[1],
-                 particle.position()[2], particle.position().eta(), m_trans,
-                 particle.momentum()[1], particle.momentum()[2], rapidity,
-                 particle.pdgcode().string().c_str(), particle.type().charge(),
-                 particle.type().baryon_number(),
-                 particle.type().strangeness());
+    std::fprintf(file_.get(), "%s",
+                 formatter_.single_particle_data(particle).c_str());
   }
 
   if (IC_proper_time_ < 0.0) {
     // First particle that is removed, overwrite negative default
-    IC_proper_time_ = particle.position().tau();
+    IC_proper_time_ = particle.hyperbolic_time();
   } else {
     // Verify that all other particles have the same proper time
-    const double next_proper_time = particle.position().tau();
+    const double next_proper_time = particle.hyperbolic_time();
     if (!((next_proper_time - IC_proper_time_) < really_small))
       throw std::runtime_error(
           "Hypersurface proper time changed during evolution.");

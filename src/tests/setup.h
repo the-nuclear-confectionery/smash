@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2015,2017-2023
+ *    Copyright (c) 2015,2017-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -106,6 +106,7 @@ inline ParticleData smashon(int id = -1) {
 inline ParticleData smashon(const Position &position, int id = -1) {
   ParticleData p{ParticleType::find(0x661), id};
   p.set_4position(position);
+  p.set_formation_time(position[0]);
   return p;
 }
 /**
@@ -126,6 +127,8 @@ inline ParticleData smashon(const Position &position, const Momentum &momentum,
   ParticleData p{ParticleType::find(0x661), id};
   p.set_4position(position);
   p.set_4momentum(momentum);
+  p.set_formation_time(position[0]);
+  p.set_unpolarized_spin_vector();
   return p;
 }
 /**
@@ -140,6 +143,8 @@ inline ParticleData smashon(const Momentum &momentum, const Position &position,
   ParticleData p{ParticleType::find(0x661), id};
   p.set_4position(position);
   p.set_4momentum(momentum);
+  p.set_formation_time(position[0]);
+  p.set_unpolarized_spin_vector();
   return p;
 }
 /**
@@ -149,8 +154,10 @@ inline ParticleData smashon(const Momentum &momentum, const Position &position,
 inline ParticleData smashon_random(int id = -1) {
   auto random_value = random::make_uniform_distribution(-15.0, +15.0);
   ParticleData p{ParticleType::find(0x661), id};
+  auto random_time = random_value();
+  p.set_formation_time(random_time);
   p.set_4position(
-      {random_value(), random_value(), random_value(), random_value()});
+      {random_time, random_value(), random_value(), random_value()});
   p.set_4momentum(smashon_mass,
                   {random_value(), random_value(), random_value()});
   return p;
@@ -224,7 +231,10 @@ inline MultiParticleReactionsBitSet no_multiparticle_reactions() {
  */
 inline ExperimentParameters default_parameters(
     int testparticles = 1, double dt = 0.1,
-    CollisionCriterion crit = CollisionCriterion::Geometric) {
+    CollisionCriterion criterion = CollisionCriterion::Geometric,
+    bool strings = false,
+    NNbarTreatment nnbar_treatment = NNbarTreatment::NoAnnihilation,
+    ReactionsBitSet included_2to2 = all_reactions_included()) {
   return ExperimentParameters{
       std::make_unique<UniformClock>(0., dt, 300.0),  // labclock
       std::make_unique<UniformClock>(0., 1., 300.0),  // outputclock
@@ -238,23 +248,24 @@ inline ExperimentParameters default_parameters(
       4.0,                                   // Gaussian smearing cut-off
       0.333333,                              // discrete smearing weight
       2.0,                                   // triangular smearing range
-      crit,
-      true,  // two_to_one
-      all_reactions_included(),
+      criterion,                             // collision criterion
+      true,                                  // two_to_one
+      included_2to2,
       no_multiparticle_reactions(),
-      false,  // strings switch
+      strings,
       1.0,
-      NNbarTreatment::NoAnnihilation,
-      0.,           // low energy sigma_NN cut-off
-      false,        // potential_affect_threshold
-      -1.0,         // box_length
-      200.0,        // max. cross section
-      2.5,          // fixed min. cell length
-      1.0,          // cross section scaling
-      false,        // in thermodynamics outputs spectators are included
-      false,        // do weak decays
-      true,         // decay initial particles
-      std::nullopt  // use monash tune, not known
+      nnbar_treatment,
+      0.,     // low energy sigma_NN cut-off
+      false,  // potential_affect_threshold
+      -1.0,   // box_length
+      200.0,  // max. cross section
+      2.5,    // fixed min. cell length
+      1.0,    // cross section scaling
+      false,  // in thermodynamics outputs spectators are included
+      false,  // do weak decays
+      true,   // decay initial particles
+      SpinInteractionType::Off,  // no spin interactions
+      std::nullopt               // use monash tune, not known
   };
 }
 
@@ -262,7 +273,9 @@ inline ExperimentParameters default_parameters(
  * Creates a standard ScatterActionsFinderParameters object which works for
  * almost all testing purposes.
  *
- * The selected arguments are changed between different tests.
+ * The selected arguments are changed between different tests, which requires
+ * setting the key by hand. This is not directly possible for enums, so one must
+ * do it case by case.
  */
 inline ScatterActionsFinderParameters default_finder_parameters(
     double elastic_parameter = 10,
@@ -272,26 +285,29 @@ inline ScatterActionsFinderParameters default_finder_parameters(
     bool strings_with_probability = false,
     TotalCrossSectionStrategy xs_strategy =
         TotalCrossSectionStrategy::BottomUp) {
-  StringTransitionParameters default_transition_params{};
-  return {elastic_parameter,
-          0.,    // low_snn_cut
-          1.,    // scale_xs
-          0.,    // additional_el_xs
-          200.,  // maximum_cross_section
-          CollisionCriterion::Geometric,
-          nnbar_treatment,
-          included_2to2,
-          no_multiparticle_reactions(),
-          1,      // testparticles
-          true,   // two_to_one
-          false,  // allow_first_collisions_within_nucleus
-          strings_switch,
-          use_AQM,
-          strings_with_probability,
-          true,  // only_warn_for_high_prob
-          default_transition_params,
-          xs_strategy,
-          PseudoResonance::None};
+  Configuration config{
+      R"(
+  Collision_Term:
+    Only_Warn_For_High_Probability: true
+    Pseudoresonance: None
+  )"};
+  config.set_value(InputKeys::collTerm_elasticCrossSection, elastic_parameter);
+  config.set_value(InputKeys::collTerm_useAQM, use_AQM);
+  config.set_value(InputKeys::collTerm_stringsWithProbability,
+                   strings_with_probability);
+
+  if (xs_strategy == TotalCrossSectionStrategy::BottomUp) {
+    config.merge_yaml(InputKeys::collTerm_totXsStrategy.as_yaml("BottomUp"));
+  } else if (xs_strategy == TotalCrossSectionStrategy::TopDown) {
+    config.merge_yaml(InputKeys::collTerm_totXsStrategy.as_yaml("TopDown"));
+  } else if (xs_strategy == TotalCrossSectionStrategy::TopDownMeasured) {
+    config.merge_yaml(
+        InputKeys::collTerm_totXsStrategy.as_yaml("TopDownMeasured"));
+  }
+  return ScatterActionsFinderParameters(
+      config,
+      default_parameters(1, 0.1, CollisionCriterion::Geometric, strings_switch,
+                         nnbar_treatment, included_2to2));
 }
 
 /// Creates default EventInfo object for testing purposes
@@ -324,6 +340,21 @@ inline std::unique_ptr<StringProcess> default_string_process_interface() {
       true,     // Separate_Fragment_Baryon
       0.15,     // Popcorn_Rate
       false);   // Use_Monash_Tune
+}
+
+/// Creates default parameters for dynamic IC
+inline InitialConditionParameters default_dynamic_IC_parameters() {
+  InitialConditionParameters parameters{};
+  parameters.type = FluidizationType::Dynamic;
+  parameters.fluidizable_processes = FluidizableProcessesBitSet{}.set();
+  parameters.energy_density_threshold = 0.5;
+  parameters.min_time = 0;
+  parameters.max_time = 100;
+  parameters.num_fluid_cells = 50;
+  parameters.formation_time_fraction = 1;
+  parameters.smearing_kernel_at_0 = std::pow(2 * M_PI, -1.5);
+  parameters.delay_initial_elastic = false;
+  return parameters;
 }
 
 /**

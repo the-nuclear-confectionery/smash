@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2013-2021
+ *    Copyright (c) 2013-2021,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -12,12 +12,17 @@
 #include "smash/decaymodes.h"
 #include "smash/logging.h"
 #include "smash/pdgcode.h"
+#include "smash/potential_globals.h"
 
 namespace smash {
+
 static constexpr int LDecayModes = LogArea::DecayModes::id;
 
-DecayAction::DecayAction(const ParticleData &p, double time)
-    : Action({p}, time), total_width_(0.) {}
+DecayAction::DecayAction(const ParticleData &p, double time,
+                         SpinInteractionType spin_interaction_type)
+    : Action({p}, time),
+      total_width_(0.),
+      spin_interaction_type_(spin_interaction_type) {}
 
 void DecayAction::add_decays(DecayBranchList pv) {
   add_processes<DecayBranch>(std::move(pv), decay_channels_, total_width_);
@@ -27,7 +32,7 @@ void DecayAction::add_decay(DecayBranchPtr p) {
   add_process<DecayBranch>(p, decay_channels_, total_width_);
 }
 
-void DecayAction::generate_final_state() {
+bool DecayAction::sample_outgoing_particles() {
   logg[LDecayModes].debug("Process: Resonance decay. ");
   /* Execute a decay process for the selected particle.
    *
@@ -49,10 +54,14 @@ void DecayAction::generate_final_state() {
   switch (outgoing_particles_.size()) {
     case 2:
       sample_2body_phasespace();
-      break;
+      if (pot_pointer) {
+        return was_2body_phase_space_sampled_with_potentials_as_valid_.value();
+      } else {
+        return true;
+      }
     case 3:
       sample_manybody_phasespace();
-      break;
+      return true;
     default:
       throw InvalidDecay(
           "DecayAction::perform: Only 1->2 or 1->3 processes are supported. "
@@ -62,7 +71,16 @@ void DecayAction::generate_final_state() {
           incoming_particles_[0].pdgcode().string() + ", mass=" +
           std::to_string(incoming_particles_[0].effective_mass()) + ")");
   }
+}
 
+void DecayAction::generate_final_state() {
+  int n_try = 1000;
+  while (n_try--) {
+    if (sample_outgoing_particles())
+      break;
+  }
+
+  const bool core_in_incoming = incoming_particles_[0].is_core();
   // Set formation time.
   for (auto &p : outgoing_particles_) {
     logg[LDecayModes].debug("particle momenta in lrf ", p);
@@ -71,7 +89,66 @@ void DecayAction::generate_final_state() {
     // Boost to the computational frame
     p.boost_momentum(-total_momentum_of_outgoing_particles().velocity());
     logg[LDecayModes].debug("particle momenta in comp ", p);
+    if (core_in_incoming) {
+      p.fluidize();
+    }
+    if (p.type().pdgcode().is_heavy_flavor()) {
+      p.set_perturbative_weight(incoming_particles_[0].perturbative_weight());
+    }
   }
+
+  /*
+   * @brief Σ* → Λ + π decay: propagate Λ polarization from the intermediate
+   * resonance.
+   *
+   * During Λ+π → Σ* formation we stored the incoming Λ polarization by
+   * writing it into the Σ* spin 4-vector (optionally applying a Λ spin-flip
+   * probability, cf. arXiv:2404.15890v2). At decay, we must hand this
+   * polarization back to the outgoing Λ to transport Λ polarization through the
+   * resonance stage.
+   */
+  if (spin_interaction_type_ != SpinInteractionType::Off &&
+      outgoing_particles_.size() == 2) {
+    // Check for Σ* → Λ + π decay channel
+    int lambda_idx = -1;
+    int pion_idx = -1;
+    const bool is_sigmastar_decay = is_sigmastar_to_lambda_pion_decay(
+        incoming_particles_[0], outgoing_particles_[0], outgoing_particles_[1],
+        lambda_idx, pion_idx);
+
+    if (is_sigmastar_decay) {
+      auto &sigma_star = incoming_particles_[0];
+      auto &lambda = outgoing_particles_[lambda_idx];
+      auto &pion = outgoing_particles_[pion_idx];
+      // Copy spin vector from Σ* to Λ and boost it to the Λ frame
+      FourVector final_spin_vector =
+          sigma_star.spin_vector().lorentz_boost(lambda.velocity());
+      lambda.set_spin_vector(final_spin_vector);
+      pion.set_spin_vector(FourVector{0., 0., 0., 0.});
+    } else {
+      // Set unpolarized spin vectors
+      assign_unpolarized_spin_vector_to_outgoing_particles();
+    }
+  } else if (spin_interaction_type_ != SpinInteractionType::Off &&
+             outgoing_particles_.size() != 2) {
+    // Set unpolarized spin vectors
+    assign_unpolarized_spin_vector_to_outgoing_particles();
+  }
+}
+
+void DecayAction::sample_2body_phasespace() {
+  assert(outgoing_particles_.size() == 2);
+  const FourVector p_tot = total_momentum_of_outgoing_particles();
+  const double cm_kin_energy = p_tot.abs();
+  const std::pair<double, double> masses = sample_masses(cm_kin_energy);
+
+  const bool is_valid = !std::isnan(masses.first) && !std::isnan(masses.second);
+
+  if (pot_pointer) {
+    was_2body_phase_space_sampled_with_potentials_as_valid_ = is_valid;
+  }
+
+  sample_angles(masses, cm_kin_energy);
 }
 
 /* This is overridden from the Action class in order to
@@ -84,15 +161,24 @@ std::pair<double, double> DecayAction::sample_masses(
   // start with pole masses
   std::pair<double, double> masses = {t_a.mass(), t_b.mass()};
 
-  if (kinetic_energy_cm < t_a.min_mass_kinematic() + t_b.min_mass_kinematic()) {
-    const std::string reaction =
-        incoming_particles_[0].type().name() + "→" + t_a.name() + t_b.name();
-    throw InvalidResonanceFormation(
-        reaction + ": not enough energy, " + std::to_string(kinetic_energy_cm) +
-        " < " + std::to_string(t_a.min_mass_kinematic()) + " + " +
-        std::to_string(t_b.min_mass_kinematic()));
-  }
+  const bool below_threshold_energy =
+      kinetic_energy_cm < t_a.min_mass_kinematic() + t_b.min_mass_kinematic();
 
+  const bool return_nan_on_failure = pot_pointer != nullptr;
+
+  if (below_threshold_energy) {
+    if (return_nan_on_failure) {
+      return {smash_NaN<double>, smash_NaN<double>};
+    } else {
+      const std::string reaction =
+          incoming_particles_[0].type().name() + "→" + t_a.name() + t_b.name();
+      throw InvalidResonanceFormation(
+          reaction + ": not enough energy, " +
+          std::to_string(kinetic_energy_cm) + " < " +
+          std::to_string(t_a.min_mass_kinematic()) + " + " +
+          std::to_string(t_b.min_mass_kinematic()));
+    }
+  }
   // If one of the particles is a resonance, sample its mass.
   if (!t_a.is_stable() && t_b.is_stable()) {
     masses.first = t_a.sample_resonance_mass(t_b.mass(), kinetic_energy_cm, L_);

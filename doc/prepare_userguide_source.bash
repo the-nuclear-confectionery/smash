@@ -2,12 +2,12 @@
 #
 ########################################################
 #
-#    Copyright (c) 2014,2022
+#    Copyright (c) 2014,2022,2025
 #      SMASH Team
 #
-#    BSD 3-clause license
+#     GNU General Public License (GPLv3 or later)
 #
-#########################################################
+########################################################
 #
 # This script, generally called by CMake when building the user guide,
 # is supposed to collect all the /*!\Userguide documentation blocks into

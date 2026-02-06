@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2016-2020,2022
+ *    Copyright (c) 2016-2020,2022,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -353,7 +353,7 @@ class HadronGasEos {
 
   /// Check if a particle belongs to the EoS
   static bool is_eos_particle(const ParticleType& ptype) {
-    return ptype.is_hadron() && ptype.pdgcode().charmness() == 0;
+    return ptype.is_hadron() && !ptype.pdgcode().is_heavy_flavor();
   }
 
   /// Create an EoS table or not?

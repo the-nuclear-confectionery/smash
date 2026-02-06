@@ -10,11 +10,12 @@
    3. [SMASH output slightly differs on different platforms. Why?](#fuse-math-expr)
    4. [SMASH does not compile with pre-compiled ROOT binaries. What should I do?](#precompiled-root)
    5. [I run out of disk space compiling the code. Why?](#out-of-disk-space)
-   6. [How can I use a different compiler?](#different-compilers)
-   7. [How to use the LLVM implementation of the C++ standard library?](#llvm-STL)
-   8. [How can I use SMASH as an external library?](#smash-as-an-external-library)
-   9. [Can I disable ROOT or HepMC support?](#disable-root-hempc)
-   10. [ROOT or HepMC are installed but CMake does not find them. What should I do?](#root-hepmc-not-found)
+   6. [Can I disable tests or part of them?](#disabling-tests)
+   7. [How can I use a different compiler?](#different-compilers)
+   8. [How to use the LLVM implementation of the C++ standard library?](#llvm-STL)
+   9. [How can I use SMASH as an external library?](#how-can-i-use-smash-as-an-external-library)
+   10. [Can I disable ROOT or HepMC support?](#disable-root-hempc)
+   11. [ROOT or HepMC are installed but CMake does not find them. What should I do?](#root-hepmc-not-found)
 
 ---
 
@@ -40,14 +41,14 @@ However, some of the SMASH prerequisites are less likely to be already available
 
 ### Building Pythia
 
-SMASH is tightly coupled to Pythia and thus requires a specific version, which is currently `8.310`.
+SMASH is tightly coupled to Pythia and thus requires a specific version, which is currently `8.316`.
 If the required version is not already installed or if there are issues with the available one, it is recommended to build Pythia with similar flags as used for SMASH, like in the example below.
 
 To download and build the needed version of Pythia, use the following commands:
 ```console
-wget https://pythia.org/download/pythia83/pythia8310.tgz
-tar xf pythia8310.tgz && rm pythia8310.tgz
-cd pythia8310
+wget https://pythia.org/download/pythia83/pythia8316.tgz
+tar xf pythia8316.tgz && rm pythia8316.tgz
+cd pythia8316
 ./configure --cxx-common='-std=c++17 -march=native -O3 -fPIC -pthread'
 make
 ```
@@ -71,9 +72,9 @@ CXX=clang++ ./configure --cxx-common='-std=c++17 -stdlib=libc++ -march=native -O
 
 The commands to build Pythia on a M1 Apple machine become:
 ```console
-curl https://pythia.org/download/pythia83/pythia8310.tgz -o pythia8310.tgz
-tar xf pythia8310.tgz && rm pythia8310.tgz
-cd pythia8310
+curl https://pythia.org/download/pythia83/pythia8316.tgz -o pythia8316.tgz
+tar xf pythia8316.tgz && rm pythia8316.tgz
+cd pythia8316
 ./configure --cxx-common='-std=c++17 -O3 -fPIC -pthread'
 make
 ```
@@ -125,7 +126,8 @@ wget ftp://ftp.gnu.org/gnu/gsl/gsl-latest.tar.gz
 tar -zxvf gsl-latest.tar.gz
 ```
 
-This creates a folder named `gsl-[version_number]`, which is called `${GSL}` here.
+This creates a folder named `gsl-[version_number]`.
+In the following terminal commands, the absolute path to this folder is called `${GSL}`.
 To build and install the downloaded source use
 ```console
 cd "${GSL}"
@@ -142,24 +144,28 @@ When setting up SMASH, use the `-DGSL_ROOT_DIR=${GSL}` CMake option to let CMake
 
 ## Building SMASH
 
-The bare minimum needed to build SMASH from within its repository reads:
+Clone the SMASH repository with the help of `git clone`.
+The bare minimum commands needed to build SMASH from within the cloned repository are:
 ```console
 mkdir build
 cd build
-cmake -DPythia_CONFIG_EXECUTABLE=[...]/pythia8310/bin/pythia8-config ..
+cmake -DPythia_CONFIG_EXECUTABLE=[...]/pythia8316/bin/pythia8-config ..
 make
 ```
 
 However, CMake offers plenty of possible customizations, partly natively and partly created ad-hoc for SMASH.
 In the following, the relevant explanation about these can be found and users should collect the relevant information for their case and build the appropriate `cmake` command according to their needs.
 
+Please note that the `make` command builds everything (executables, tests, and libraries) and this might take a while.
+You can use `make smash` if you are interested only in the executables or use `make smash_shared` to exclusively build the libraries (needed e.g. in another project [using SMASH as a library](#how-can-i-use-smash-as-an-external-library)).
+
 #### Alternatives to specify the installation directory of Pythia
 
 A few GNU/Linux distributions provide pre-built Pythia binaries without `pythia8-config` binary.
 In this case, using the `-DPythia_CONFIG_EXECUTABLE` option as shown above is not possible and the top installation directory of Pythia containing `lib` has to be specified in either of the following ways:
 
-*  Either set the bash environment variables `PYTHIA8` or `PYTHIA_ROOT_DIR` (e.g. `export PYTHIA_ROOT_DIR=/opt/pythia8310`) or
-*  use the CMake `-DPYTHIA_ROOT_DIR` option (e.g. `cmake -DPYTHIA_ROOT_DIR=/opt/pythia8310 ..`).
+*  Either set the bash environment variables `PYTHIA8` or `PYTHIA_ROOT_DIR` (e.g. `export PYTHIA_ROOT_DIR=/opt/pythia8316`) or
+*  use the CMake `-DPYTHIA_ROOT_DIR` option (e.g. `cmake -DPYTHIA_ROOT_DIR=/opt/pythia8316 ..`).
 
 If no variables are set and no options are passed, CMake searches for Pythia under the default path `/usr`.
 To check which environment variables related to PYTHIA are currently set, use e.g. `printenv | grep PYTHIA`.
@@ -263,6 +269,22 @@ If disk space is restricted, consider to just run `make smash`, which will only 
 However, it is still recommended to run the unit tests at least once when compiling in a new environment to ensure that everything works as expected.
 To see how to run the tests, see [CONTRIBUTING](CONTRIBUTING.md).
 
+<a id="disabling-tests"></a>
+
+### Can I disable tests or part of them?
+
+SMASH is shipped with many tests of different type.
+Most of them are unit and integration tests which have been kept separated from functional tests.
+When CMake configure the project (i.e. when running `cmake` from the ***build*** folder), unit and integration tests are always setup to be later compiled and each of them has an executable associated.
+However, [as mentioned](#out-of-disk-space), one is not obliged to compile everything, as it is possible to pass a given target to `make`.
+
+On the other hand, functional tests are only setup if the CMake option `ENABLE_FUNCTIONAL_TESTS` is set to `ON`, which is **NOT** the default case.
+This is due to the fact that, in order to setup these tests, CMake will create a Python virtual environment installing requirements in it and this might take some time (usually the first time only) if some required packages (e.g. `pandas`) need to be built from source.
+If these tests are not enabled, they will not be visible and cannot be executed when running `ctest`.
+Pass `-DENABLE_FUNCTIONAL_TESTS=ON` to `cmake` in order to include these tests when setting up the project.
+Functional tests are written in Python and they run SMASH as black-box.
+In this sense they do not need to be compiled, but the `smash` executable has to be created prior to their execution.
+
 <a id="different-compilers"></a>
 
 ### How can I use a different compiler?
@@ -319,19 +341,26 @@ All of this is needed to let the executable find the library ABI at run time.
 
 **NOTE:** Remember to compile Pythia using LLVM implementation, too, as [previously described](#pythia).
 
-<a id="smash-as-an-external-library"></a>
+<a id="how-can-i-use-smash-as-an-external-library"></a>
 
 ### How can I use SMASH as an external library?
 
-The recommended way to use SMASH as a library in another software is to first install it according to the [instructions above](#customizing).
+The recommended way to use SMASH as a library in another software is to first install it according to the [instructions in the install section](#customizing).
 This will build and copy all necessary SMASH files to the installation folder and, therefore, prevent unexpected surprises in your software behavior in case the SMASH source code changes (e.g. because of git operations).
 In your software you can then use the files in the SMASH installation directory and manually pass them to the compiler.
+
+Another possibility would be to build SMASH following the [instructions in the building section](#building).
+Please be aware that in this case, using `make` (builds executables, tests, and libraries) or `make smash_shared` (exclusively builds the libraries) will both work, whereas `make smash` will not since this only builds the `smash` executable.
+Be aware that this build is just local and you would have to refer to the path of it in the project that needs to access the SMASH libraries.
+
 However, we encourage you to set up your project with CMake, too.
 In that case, you can use the _FindSMASH.cmake_ module shipped in the ***cmake*** folder.
 Refer to the *examples/using_SMASH_as_library/CMakeLists.txt* file for an example.
 There are two important aspects to mention, in order to let the CMake `find_package(SMASH)` command succeed:
 1. The folder where *FindSMASH.cmake* is needs to be in the `CMAKE_MODULE_PATH` CMake variable;
 2. The `SMASH_INSTALL_DIR` environment variable must be correctly set.
+
+If you are interested how to set up SMASH as an external library for your project, check out the [example how to do this in a CMake project](https://github.com/smash-transport/smash/tree/main/examples/using_SMASH_as_library).
 
 <a id="disable-root-hempc"></a>
 

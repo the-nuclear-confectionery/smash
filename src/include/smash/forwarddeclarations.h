@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -13,67 +13,42 @@
 /// @cond
 // exclude most content here from documentation
 
+#include <bitset>
 #include <iosfwd>
 #include <memory>
 #include <vector>
 
-#ifdef _LIBCPP_BEGIN_NAMESPACE_STD
-_LIBCPP_BEGIN_NAMESPACE_STD
-#else
-namespace std {
-#endif
-
-template <typename T>
-class allocator;
-template <typename T, typename A>
-class vector;
-
-template <typename T>
-struct default_delete;
-template <typename T, typename Deleter>
-class unique_ptr;
-
-template <std::size_t N>
-class bitset;
-
-#ifdef _LIBCPP_END_NAMESPACE_STD
-_LIBCPP_END_NAMESPACE_STD
-#else
-}  // namespace std
-#endif
-
 namespace smash {
-
-template <typename T>
-using build_unique_ptr_ = std::unique_ptr<T, std::default_delete<T>>;
-template <typename T>
-using build_vector_ = std::vector<T, std::allocator<T>>;
 
 class Action;
 class ScatterAction;
 class ScatterActionMulti;
 class BoxModus;
 class Clock;
+class CollisionBranch;
 class Configuration;
 class CrossSections;
+class DecayBranch;
 class DecayModes;
 class DecayType;
+class ExperimentBase;
 class FourVector;
-class ThreeVector;
+class IsoParticleType;
+template <typename T>
+class Key;
 class ModusDefault;
 class OutputInterface;
 class ParticleData;
 class Particles;
 class ParticleType;
 class ParticleTypePtr;
-class IsoParticleType;
 class PdgCode;
-class DecayBranch;
-class CollisionBranch;
+class ScatterActionsFinderParameters;
 class Tabulation;
-class ExperimentBase;
+class ThreeVector;
+
 struct ExperimentParameters;
-struct ScatterActionsFinderParameters;
+struct InitialConditionParameters;
 struct StringTransitionParameters;
 struct Nucleoncorr;
 
@@ -114,8 +89,8 @@ enum class DerivativesMode {
 };
 
 /**
- * Modes of calculating the gradients: whether to calculate the rest frame
- * density derivatives.
+ * This enum is here only to serve InputKeys class, but it is unused and
+ * referring to a removed SMASH input key.
  */
 enum class RestFrameDensityDerivativesMode {
   On,
@@ -251,6 +226,7 @@ enum class OutputOnlyFinal {
 };
 
 /// The different groups of 2 to 2 reactions that one can include
+// Because std::bitset does not handle enum classes, this is a simple enum.
 enum IncludedReactions {
   All = 50,
   Elastic = 0,
@@ -269,6 +245,7 @@ enum IncludedReactions {
 typedef std::bitset<10> ReactionsBitSet;
 
 /// The different groups of multi-particle reactions that one can include
+// Because std::bitset does not handle enum classes, this is a simple enum.
 enum IncludedMultiParticleReactions {
   Meson_3to1 = 0,
   Deuteron_3to2 = 1,
@@ -278,6 +255,14 @@ enum IncludedMultiParticleReactions {
 
 /// Container for the n to m reactions in the code
 typedef std::bitset<4> MultiParticleReactionsBitSet;
+
+/// Possible spin interaction types
+enum class SpinInteractionType {
+  /// All spin interactions
+  On,
+  /// No spin interactions
+  Off
+};
 
 /**
  * Defines the algorithm used for the forced thermalization.
@@ -338,7 +323,50 @@ enum class PseudoResonance {
   ClosestFromUnstable,
 };
 
+/// Possible methods to convert SMASH particle into fluid cells.
+/// \see_key{key_MC_IC_type_}
+enum class FluidizationType {
+  /// Hypersurface crossed at a fixed proper time
+  ConstantTau,
+  /// Dynamic fluidization based on local densities
+  Dynamic,
+};
+
+/// The different processes from where fluidizable particles are produced.
+/// \see_key{key_MC_IC_fluidizable_processes}
+// Because std::bitset does not handle enum classes, this is a simple enum.
+enum IncludedFluidizableProcesses {
+  From_Elastic = 0,
+  From_Decay = 1,
+  From_Inelastic = 2,
+  From_SoftString = 3,
+  From_HardString = 4,
+};
+
+typedef std::bitset<5> FluidizableProcessesBitSet;
+
+/**
+ * Allows to choose which kind of density to calculate.
+ * The baryon density is necessary for the Skyrme potential.
+ * For the symmetry potential one needs to know the isospin density.
+ */
+enum class DensityType {
+  None = 0,
+  Hadron = 1,
+  Baryon = 2,
+  BaryonicIsospin = 3,
+  Pion = 4,
+  Isospin3_tot = 5,
+  Charge = 6,
+  Strangeness = 7,
+};
+
 /// @cond
+template <typename T>
+using build_unique_ptr_ = std::unique_ptr<T, std::default_delete<T>>;
+template <typename T>
+using build_vector_ = std::vector<T, std::allocator<T>>;
+
 using ActionPtr = build_unique_ptr_<Action>;
 using ScatterActionPtr = build_unique_ptr_<ScatterAction>;
 using ScatterActionMultiPtr = build_unique_ptr_<ScatterActionMulti>;

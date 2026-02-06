@@ -1,17 +1,17 @@
 ########################################################
 #
-#    Copyright (c) 2012-2024
+#    Copyright (c) 2012-2025
 #      SMASH Team
 #
 #    BSD 3-clause license
 #
-#########################################################
+########################################################
 
 # Minimum cmake version this is tested on
 cmake_minimum_required(VERSION 3.16)
 
 # The name, version and language of our project
-project(SMASH VERSION 3.1 LANGUAGES CXX)
+project(SMASH VERSION 3.3 LANGUAGES CXX)
 
 # Fail if cmake is called in the source directory
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
@@ -166,7 +166,7 @@ endif()
 # add 3rd-party libraries (before setting compiler flags etc)
 include_directories(SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/Cuba-4.2.2")
 include_directories(SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/einhard")
-include_directories(SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/yaml-cpp-0.7.0/include")
+include_directories(SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/yaml-cpp-0.8.0/include")
 add_subdirectory(3rdparty)
 
 # Set up compile options passed to all targets. From CMake documentation: "The flags in

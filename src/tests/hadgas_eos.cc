@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2016-2020,2022
+ *    Copyright (c) 2016-2020,2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -26,18 +26,40 @@ TEST(td_simple_gas) {
   const double mub = 0.8;
   const double mus = 0.1;
   const double muq = 0.05;
-  COMPARE_ABSOLUTE_ERROR(HadronGasEos::net_baryon_density(T, mub, mus, muq),
-                         0.579156863, 1.e-6);
-  COMPARE_ABSOLUTE_ERROR(HadronGasEos::net_strange_density(T, mub, mus, muq),
-                         -0.03686360221, 1.e-6);
-  COMPARE_ABSOLUTE_ERROR(HadronGasEos::net_charge_density(T, mub, mus, muq),
-                         0.4201279754, 1.e-6);
-  COMPARE_ABSOLUTE_ERROR(HadronGasEos::density(T, mub, mus, muq), 0.6190973942,
-                         1.e-6);
-  COMPARE_ABSOLUTE_ERROR(HadronGasEos::pressure(T, mub, mus, muq),
-                         0.06190973942, 1.e-6);
-  COMPARE_ABSOLUTE_ERROR(HadronGasEos::energy_density(T, mub, mus, muq),
-                         0.7252341309, 1.e-6);
+  // The EOS (Equation of State) is sensitive to resonance parameters.
+  // If decaymodes.txt or particles.txt are changed, these tests might fail.
+  // The current values are from running SMASH with the parameters in the input
+  // folder.
+  const double net_baryon_density =
+      HadronGasEos::net_baryon_density(T, mub, mus, muq);
+  const double net_strange_density =
+      HadronGasEos::net_strange_density(T, mub, mus, muq);
+  const double net_charge_density =
+      HadronGasEos::net_charge_density(T, mub, mus, muq);
+  const double density = HadronGasEos::density(T, mub, mus, muq);
+  const double pressure = HadronGasEos::pressure(T, mub, mus, muq);
+  const double energy_density = HadronGasEos::energy_density(T, mub, mus, muq);
+  std::stringstream expected_values;
+  expected_values << std::setprecision(10);
+  expected_values << "\nExpected values:\n "
+                  << "net_baryon_density net_strange_density "
+                     "net_charge_density density pressure energy_density\n";
+  expected_values << net_baryon_density << " " << net_strange_density << " "
+                  << net_charge_density << " " << density << " " << pressure
+                  << " " << energy_density << " " << std::endl;
+
+  COMPARE_ABSOLUTE_ERROR(net_baryon_density, 0.5832753159, 1.e-6)
+      .on_failure(expected_values.str());
+  COMPARE_ABSOLUTE_ERROR(net_strange_density, -0.03686360221, 1.e-6)
+      .on_failure(expected_values.str());
+  COMPARE_ABSOLUTE_ERROR(net_charge_density, 0.4236041139, 1.e-6)
+      .on_failure(expected_values.str());
+  COMPARE_ABSOLUTE_ERROR(density, 0.6232158477, 1.e-6)
+      .on_failure(expected_values.str());
+  COMPARE_ABSOLUTE_ERROR(pressure, 0.06232158477, 1.e-6)
+      .on_failure(expected_values.str());
+  COMPARE_ABSOLUTE_ERROR(energy_density, 0.7325009276, 1.e-6)
+      .on_failure(expected_values.str());
 }
 
 TEST(mu_zero_net_strangeness) {

@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2020,2022-2024
+ *    Copyright (c) 2014-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -9,14 +9,15 @@
 
 #ifndef SRC_INCLUDE_SMASH_BINARYOUTPUT_H_
 #define SRC_INCLUDE_SMASH_BINARYOUTPUT_H_
-
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "file.h"
 #include "forwarddeclarations.h"
 #include "numeric_cast.h"
+#include "outputformatter.h"
 #include "outputinterface.h"
 #include "outputparameters.h"
 
@@ -34,11 +35,21 @@ class BinaryOutputBase : public OutputInterface {
    * \param[in] path Output path.
    * \param[in] mode Is used to determine the file access mode.
    * \param[in] name Name of the output.
-   * \param[in] extended_format Is the written output extended.
+   * \param[in] quantities The list of quantities printed to the output.
+   *
+   * \throw std::invalid_argument if the list of quantities is empty.
    */
   explicit BinaryOutputBase(const std::filesystem::path &path,
                             const std::string &mode, const std::string &name,
-                            bool extended_format);
+                            const std::vector<std::string> &quantities);
+
+  /**
+   * Write several bytes to the binary output. Meant to be used by the
+   * OutputFormatter.
+   *
+   * \param[in] chunk vector of bytes to be written.
+   */
+  void write(const ToBinary::type &chunk);
 
   /**
    * Write byte to binary output.
@@ -117,9 +128,11 @@ class BinaryOutputBase : public OutputInterface {
 
  private:
   /// Binary file format version number
-  const uint16_t format_version_ = 9;
-  /// Option for extended output
-  bool extended_;
+  const uint16_t format_version_ = 10;
+  /// Format variant number associated to the custom quantities case
+  const uint16_t format_custom_ = 2;
+  /// The output formatter
+  OutputFormatter<ToBinary> formatter_;
 };
 
 /**
@@ -142,28 +155,30 @@ class BinaryOutputCollisions : public BinaryOutputBase {
    * \param[in] path Output path.
    * \param[in] name Name of the output.
    * \param[in] out_par A structure containing parameters of the output.
+   * \param[in] quantities The list of quantities printed to the output.
    */
   BinaryOutputCollisions(const std::filesystem::path &path, std::string name,
-                         const OutputParameters &out_par);
+                         const OutputParameters &out_par,
+                         const std::vector<std::string> &quantities);
 
   /**
    * Writes the initial particle information list of an event to the binary
    * output.
    * \param[in] particles Current list of all particles.
-   * \param[in] event_number Unused, needed since inherited.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventstart(const Particles &particles, const int event_number,
+  void at_eventstart(const Particles &particles, const EventLabel &event_label,
                      const EventInfo &event) override;
 
   /**
    * Writes the final particle information list of an event to the binary
    * output.
    * \param[in] particles Current list of particles.
-   * \param[in] event_number Number of event.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventend(const Particles &particles, const int32_t event_number,
+  void at_eventend(const Particles &particles, const EventLabel &event_label,
                    const EventInfo &event) override;
 
   /**
@@ -202,26 +217,28 @@ class BinaryOutputParticles : public BinaryOutputBase {
    * \param[in] path Output path.
    * \param[in] name Name of the ouput.
    * \param[in] out_par A structure containing the parameters of the output.
+   * \param[in] quantities The list of quantities printed to the output.
    */
   BinaryOutputParticles(const std::filesystem::path &path, std::string name,
-                        const OutputParameters &out_par);
+                        const OutputParameters &out_par,
+                        const std::vector<std::string> &quantities);
 
   /**
    * Writes the initial particle information of an event to the binary output.
    * \param[in] particles Current list of all particles.
-   * \param[in] event_number Unused, needed since inherited.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventstart(const Particles &particles, const int event_number,
+  void at_eventstart(const Particles &particles, const EventLabel &event_label,
                      const EventInfo &event) override;
 
   /**
    * Writes the final particle information of an event to the binary output.
    * \param[in] particles Current list of particles.
-   * \param[in] event_number Number of event.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventend(const Particles &particles, const int event_number,
+  void at_eventend(const Particles &particles, const EventLabel &event_label,
                    const EventInfo &event) override;
 
   /**
@@ -229,11 +246,13 @@ class BinaryOutputParticles : public BinaryOutputBase {
    * \param[in] particles Current list of particles.
    * \param[in] clock Unused, needed since inherited.
    * \param[in] dens_param Unused, needed since inherited.
+   * \param[in] event_label Numbers of event and ensemble.
    * \param[in] event Event info, see \ref event_info.
    */
   void at_intermediate_time(const Particles &particles,
                             const std::unique_ptr<Clock> &clock,
                             const DensityParameters &dens_param,
+                            const EventLabel &event_label,
                             const EventInfo &event) override;
 
  private:
@@ -261,25 +280,26 @@ class BinaryOutputInitialConditions : public BinaryOutputBase {
    *
    * \param[in] path Output path.
    * \param[in] name Name of the ouput.
-   * \param[in] out_par A structure containing the parameters of the output.
+   * \param[in] quantities The list of quantities printed to the output.
    */
   BinaryOutputInitialConditions(const std::filesystem::path &path,
                                 std::string name,
-                                const OutputParameters &out_par);
+                                const std::vector<std::string> &quantities);
 
   /**
    * Writes the initial particle information of an event to the binary output.
    * Function unused for IC output. Needed since inherited.
    */
-  void at_eventstart(const Particles &, const int, const EventInfo &) override;
+  void at_eventstart(const Particles &, const EventLabel &,
+                     const EventInfo &) override;
 
   /**
    * Writes the final particle information of an event to the binary output.
    * \param[in] particles Current list of particles.
-   * \param[in] event_number Number of event.
+   * \param[in] event_label Number of event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventend(const Particles &particles, const int event_number,
+  void at_eventend(const Particles &particles, const EventLabel &event_label,
                    const EventInfo &event) override;
 
   /**
@@ -290,6 +310,24 @@ class BinaryOutputInitialConditions : public BinaryOutputBase {
    */
   void at_interaction(const Action &action, const double) override;
 };
+
+/**
+ * \ingroup output
+ *
+ * \brief Create a binary output object. This is a helper function for the \c
+ * Experiment class to facilitate the logic when creating the output objects.
+ *
+ * \param[in] format The output format as string, e.g. \c "Oscar2013"
+ * \param[in] content The output content as string, e.g. \c "Particles"
+ * \param[in] path The path to the output directory
+ * \param[in] out_par The output parameters object containing output metadata
+ *
+ * \return A \c std::unique_ptr<OutputInterface> polymorphically initialised to
+ * the correct binary output object.
+ */
+std::unique_ptr<OutputInterface> create_binary_output(
+    const std::string &format, const std::string &content,
+    const std::filesystem::path &path, const OutputParameters &out_par);
 
 }  // namespace smash
 

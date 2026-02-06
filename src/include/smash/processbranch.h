@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2013-2023
+ *    Copyright (c) 2013-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -34,7 +34,7 @@ namespace smash {
  * here an explicit members description and we simply refer to the user guide.
  * If you add a new process type here, document the new member as the other
  * existing ones and include the corresponding description in the Doxygen page
- * with anchor "doxypage_output_oscar_particles_process_types".
+ * with anchor "doxypage_output_process_types".
  */
 enum class ProcessType {
   /// \see_process_type{0}
@@ -58,7 +58,9 @@ enum class ProcessType {
   /// \see_process_type{7}
   Thermalization = 7,
   /// \see_process_type{8}
-  HyperSurfaceCrossing = 8,
+  Fluidization = 8,
+  /// \see_process_type{21}
+  FluidizationNoRemoval = 21,
   /// \see_process_type{9}
   Bremsstrahlung = 9,
   /// \see_process_type{10}
@@ -87,6 +89,39 @@ enum class ProcessType {
   Freeforall = 90
 };
 
+inline bool is_valid_process_type(int v) {
+  // NOTE: There must NOT be a default case in the following switch, to let the
+  // compiler warn about missing cases.
+  switch (static_cast<ProcessType>(v)) {
+    case ProcessType::None:
+    case ProcessType::Elastic:
+    case ProcessType::TwoToOne:
+    case ProcessType::TwoToTwo:
+    case ProcessType::TwoToThree:
+    case ProcessType::TwoToFour:
+    case ProcessType::TwoToFive:
+    case ProcessType::Decay:
+    case ProcessType::Wall:
+    case ProcessType::Thermalization:
+    case ProcessType::Fluidization:
+    case ProcessType::FluidizationNoRemoval:
+    case ProcessType::Bremsstrahlung:
+    case ProcessType::MultiParticleThreeMesonsToOne:
+    case ProcessType::MultiParticleThreeToTwo:
+    case ProcessType::MultiParticleFourToTwo:
+    case ProcessType::MultiParticleFiveToTwo:
+    case ProcessType::StringSoftSingleDiffractiveAX:
+    case ProcessType::StringSoftSingleDiffractiveXB:
+    case ProcessType::StringSoftDoubleDiffractive:
+    case ProcessType::StringSoftAnnihilation:
+    case ProcessType::StringSoftNonDiffractive:
+    case ProcessType::StringHard:
+    case ProcessType::FailedString:
+    case ProcessType::Freeforall:
+      return true;
+  }
+  return false;
+}
 /**
  * Check if a given process type is a soft string excitation
  * \param[in] p The process type

@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2012-2020,2022-2023
+ *    Copyright (c) 2012-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -8,13 +8,17 @@
 #define SRC_INCLUDE_SMASH_COLLIDERMODUS_H_
 
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "alphaclusterednucleus.h"
 #include "deformednucleus.h"
 #include "forwarddeclarations.h"
 #include "fourvector.h"
+#include "icparameters.h"
 #include "interpolation.h"
 #include "modusdefault.h"
 #include "nucleus.h"
@@ -134,6 +138,42 @@ class ColliderModus : public ModusDefault {
   bool calculation_frame_is_fixed_target() const {
     return frame_ == CalculationFrame::FixedTarget ? true : false;
   }
+  /// \return Whether this is an initial condition for hydrodynamics
+  bool is_IC_for_hybrid() const { return IC_for_hybrid_; }
+  /// \return Parameters used in initial conditions for hydrodynamics
+  const InitialConditionParameters &IC_parameters() const {
+    return *IC_parameters_;
+  }
+  /// \return The background energy density map
+  const std::map<int32_t, double> &fluid_background() const {
+    return *fluid_background_;
+  }
+  /// \return Lattice where fluidization is evaluated
+  const RectangularLattice<EnergyMomentumTensor> &fluid_lattice() const {
+    return *fluid_lattice_;
+  }
+  /**
+   * Build lattice of energy momentum tensor. After t>25 fm, the lattice
+   * grows at every 5 \unit{fm} to accommodate for the system expansion.
+   *
+   * \param[in] t Current time.
+   * \param[in] ensembles Only the first Particles element is actually used.
+   * \param[in] dens_par Contains parameters for density smearing.
+   */
+  void build_fluidization_lattice(double t,
+                                  const std::vector<Particles> &ensembles,
+                                  const DensityParameters &dens_par);
+
+  /**
+   * Update the background energy density due to hydrodynamics, to be
+   * called by an external manager.
+   *
+   * \param[in] background Map with particle indices as keys and their
+   * corresponding background energy density as values.
+   */
+  void update_fluidization_background(std::map<int32_t, double> &&background) {
+    *fluid_background_ = std::move(background);
+  }
 
   /**
    * \ingroup exception
@@ -181,18 +221,39 @@ class ColliderModus : public ModusDefault {
    * \param[in] nucleus_type String 'projectile' or 'target'. To display an
    * appropriate error message.
    * \return Pointer to the created deformed nucleus object.
-   * **/
+   */
   static std::unique_ptr<DeformedNucleus> create_deformed_nucleus(
+      Configuration &nucleus_cfg, const int ntest,
+      const std::string &nucleus_type);
+  /** Configure Alpha-Clustered Nucleus
+   *
+   * Sets up an alpha-clustered nucleus object based on the input parameters in
+   * the configuration file. \param[in] nucleus_cfg Subset of configuration,
+   * projectile or target section. \param[in] ntest Number of test particles
+   * \param[in] nucleus_type String 'projectile' or 'target'. To display an
+   * appropriate error message.
+   * \return Pointer to the created deformed nucleus object.
+   */
+  static std::unique_ptr<AlphaClusteredNucleus> create_alphaclustered_nucleus(
       Configuration &nucleus_cfg, const int ntest,
       const std::string &nucleus_type);
   /**
    * Checks if target and projectile are read from the same external file if
    * they are both initialized as a customnucleus. Function is only called if,
    * projectile is customnucleus.
-   * /param[in] proj_config Configuration of projectile nucleus
-   * /param[in] targ_config Configuration of target nucleus
-   **/
+   * \param[in] proj_config Configuration of projectile nucleus
+   * \param[in] targ_config Configuration of target nucleus
+   */
   bool same_inputfile(Configuration &proj_config, Configuration &targ_config);
+
+  /**
+   * Validate whether the input kinematic range for the Initial Conditions
+   * output is valid and inform the user.
+   *
+   * \throw std::invalid_argument when the cuts are invalid
+   */
+  void validate_IC_kinematic_range();
+
   /**
    * Impact parameter.
    *
@@ -203,12 +264,14 @@ class ColliderModus : public ModusDefault {
   double impact_ = 0.;
   /// Whether the reaction plane should be randomized
   bool random_reaction_plane_;
+  /// Whether the particles will serve as initial conditions for hydrodynamics
+  bool IC_for_hybrid_ = false;
   /// Method used for sampling of impact parameter.
-  Sampling sampling_ = Sampling::Quadratic;
+  Sampling sampling_ = InputKeys::modi_collider_impact_sample.default_value();
   /// Minimum value of impact parameter.
-  double imp_min_ = 0.0;
+  double imp_min_ = InputKeys::modi_collider_impact_value.default_value();
   /// Maximum value of impact parameter.
-  double imp_max_ = 0.0;
+  double imp_max_ = InputKeys::modi_collider_impact_value.default_value();
   /// Maximum value of yield. Needed for custom impact parameter sampling.
   double yield_max_ = 0.0;
   /// Pointer to the impact parameter interpolation.
@@ -229,15 +292,15 @@ class ColliderModus : public ModusDefault {
    * and target on +(this value)*v_target/v_projectile. In this way
    * projectile and target touch at t=0 in z=0.
    **/
-  double initial_z_displacement_ = 2.0;
+  double initial_z_displacement_;
   /**
    * Reference frame for the system, as specified from config
    */
-  CalculationFrame frame_ = CalculationFrame::CenterOfVelocity;
+  CalculationFrame frame_;
   /**
    * An option to include Fermi motion ("off", "on", "frozen")
    */
-  FermiMotion fermi_motion_ = FermiMotion::Off;
+  FermiMotion fermi_motion_;
   /**
    * Beam velocity of the projectile
    */
@@ -246,6 +309,17 @@ class ColliderModus : public ModusDefault {
    * Beam velocity of the target
    */
   double velocity_target_ = 0.0;
+  /// Plain Old Data type to hold parameters for initial conditions
+  std::unique_ptr<InitialConditionParameters> IC_parameters_;
+  /// Energy-momentum tensor lattice for dynamic fluidization
+  std::unique_ptr<RectangularLattice<EnergyMomentumTensor>> fluid_lattice_ =
+      nullptr;
+  /**
+   * Energy density background from hydrodynamic evolution, with particle
+   * indices as keys. Useful when using SMASH as a library.
+   */
+  std::unique_ptr<std::map<int32_t, double>> fluid_background_ = nullptr;
+
   /**
    * Get the frame dependent velocity for each nucleus, using
    * the current reference frame. \see frame_

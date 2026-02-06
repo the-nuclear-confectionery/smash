@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2015,2017-2020,2022
+ *    Copyright (c) 2014-2015,2017-2020,2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -38,8 +38,12 @@ TEST(rotate_phi) {
   DeformedNucleus dnucleus(small_list, 1);
   // Plan is to rotate the (0, 1, 0, 1) vector by phi=pi/2.
   // Rotation by pi/2 means (0, 1, 0, 1) -> (0, 0, 1, 1)
-  dnucleus.set_azimuthal_angle(M_PI / 2);
-  FourVector expectation = FourVector(0., 1., 1., 0.);
+  Configuration config{
+      InputKeys::modi_collider_projectile_orientation_phi
+          .as_yaml("1.57079632679489661923")  // as string to retain all digits
+          .c_str()};
+  dnucleus.set_orientation_from_config(config);
+  FourVector expectation = FourVector(0., 0., 1., 1.);
   for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
     i->set_4position(FourVector(0., 1., 0., 1.));
   }
@@ -48,17 +52,21 @@ TEST(rotate_phi) {
   for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
     actual = i->position();
   }
-  COMPARE_ABSOLUTE_ERROR(actual.x0(), expectation.x0(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x1(), expectation.x1(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x2(), expectation.x2(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x3(), expectation.x3(), 1e-7);
+  COMPARE_ABSOLUTE_ERROR(actual.x0(), expectation.x0(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x1(), expectation.x1(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x2(), expectation.x2(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x3(), expectation.x3(), 1e-14);
 }
 
 TEST(rotate_theta) {
   DeformedNucleus dnucleus(small_list, 1);
   // Plan is to rotate the (0, 0, 0, -1) vector by theta=pi/2
   // Rotation by pi/2 means (0, 0, 0, -1) -> (0, 0, 1, 0)
-  dnucleus.set_polar_angle(M_PI / 2);
+  Configuration config{
+      InputKeys::modi_collider_projectile_orientation_theta
+          .as_yaml("1.57079632679489661923")  // as string to retain all digits
+          .c_str()};
+  dnucleus.set_orientation_from_config(config);
   FourVector expectation = FourVector(0., 0., 1., 0.);
   for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
     i->set_4position(FourVector(0., 0., 0., -1.));
@@ -68,10 +76,10 @@ TEST(rotate_theta) {
   for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
     actual = i->position();
   }
-  COMPARE_ABSOLUTE_ERROR(actual.x0(), expectation.x0(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x1(), expectation.x1(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x2(), expectation.x2(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x3(), expectation.x3(), 1e-7);
+  COMPARE_ABSOLUTE_ERROR(actual.x0(), expectation.x0(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x1(), expectation.x1(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x2(), expectation.x2(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x3(), expectation.x3(), 1e-14);
 }
 
 TEST(rotate_both) {
@@ -79,8 +87,15 @@ TEST(rotate_both) {
   // Plan is to rotate the (0, 1, 1, 0) vector by phi=pi
   // and then by theta=pi around the rotated x-axis
   // Result: (0, 1, 1, 0) -> (0, -1, -1, 0) -> (0, -1, 1, 0)
-  dnucleus.set_azimuthal_angle(M_PI);
-  dnucleus.set_polar_angle(M_PI);
+  Configuration config{R"(
+    Modi:
+      Collider:
+        Projectile:
+          Orientation:
+            Theta: 3.14159265358979323846
+            Phi: 3.14159265358979323846
+    )"};
+  dnucleus.set_orientation_from_config(config);
   FourVector expectation = FourVector(0., -1., 1., 0.);
   for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
     i->set_4position(FourVector(0., 1., 1., 0.));
@@ -90,10 +105,41 @@ TEST(rotate_both) {
   for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
     actual = i->position();
   }
-  COMPARE_ABSOLUTE_ERROR(actual.x0(), expectation.x0(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x1(), expectation.x1(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x2(), expectation.x2(), 1e-7);
-  COMPARE_ABSOLUTE_ERROR(actual.x3(), expectation.x3(), 1e-7);
+  COMPARE_ABSOLUTE_ERROR(actual.x0(), expectation.x0(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x1(), expectation.x1(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x2(), expectation.x2(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x3(), expectation.x3(), 1e-14);
+}
+
+TEST(rotate_all_three) {
+  DeformedNucleus dnucleus(small_list, 1);
+  // Plan is to rotate the (0, 1, 1, 0) vector by phi=pi around the z-axis, then
+  // by theta=pi around the rotated x-axis and finally by psi=pi around the
+  // rotated z-axis. Result: (0, 1, 1, 0) -> (0, -1, -1, 0) -> (0, -1, 1, 0) ->
+  // (0, 1,-1,0)
+  Configuration config{R"(
+    Modi:
+      Collider:
+        Target:
+          Orientation:
+            Theta: 3.14159265358979323846
+            Phi: 3.14159265358979323846
+            Psi: 3.14159265358979323846
+    )"};
+  dnucleus.set_orientation_from_config(config);
+  FourVector expectation = FourVector(0., 1., -1., 0.);
+  for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
+    i->set_4position(FourVector(0., 1., 1., 0.));
+  }
+  dnucleus.rotate();
+  FourVector actual;
+  for (auto i = dnucleus.begin(); i != dnucleus.end(); i++) {
+    actual = i->position();
+  }
+  COMPARE_ABSOLUTE_ERROR(actual.x0(), expectation.x0(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x1(), expectation.x1(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x2(), expectation.x2(), 1e-14);
+  COMPARE_ABSOLUTE_ERROR(actual.x3(), expectation.x3(), 1e-14);
 }
 
 // Tests if the function for spherical harmonics
@@ -109,15 +155,18 @@ TEST(ylm) {
 TEST(deformation_parameters_from_config) {
   // creates config for arbitrary nucleus (Gold in this case)
   Configuration conf{R"(
-    Particles:
-      2112: 118
-      2212: 79
-    Saturation_Density: 0.1968
-    Diffusiveness: 0.8
-    Radius: 2.0
-    Deformed:
-      Beta_2: 1
-      Beta_4: 2
+    Modi:
+      Collider:
+        Target:
+          Particles:
+            2112: 118
+            2212: 79
+          Saturation_Density: 0.1968
+          Diffusiveness: 0.8
+          Radius: 2.0
+          Deformed:
+            Beta_2: 1
+            Beta_4: 2
   )"};
   // verifies if the beta values have been transcribed correctly
   DeformedNucleus dnucleus(conf, 1, false);
@@ -128,10 +177,13 @@ TEST(deformation_parameters_from_config) {
 TEST(set_deformation_parameters_automatic) {
   auto create_conf = [](int n1, int n2) {
     std::string tmp{R"(
-      Saturation_Density: 0.1968
-      Diffusiveness: 1.0
-      Radius: 1.0
-      Particles: )"};
+    Modi:
+      Collider:
+        Projectile:
+          Saturation_Density: 0.1968
+          Diffusiveness: 1.0
+          Radius: 1.0
+          Particles: )"};
     std::string particles{"{2112: " + std::to_string(n1) +
                           ", 2212: " + std::to_string(n2) + "}"};
     return Configuration{(tmp + particles).c_str()};
@@ -169,12 +221,15 @@ TEST(nucleon_density) {
   // config with values for an easy analytic deformed-woods-saxon value
   // Uranium core with default values
   Configuration conf1{R"(
-    Particles: 
-      2112: 146
-      2212: 92
-    Saturation_Density: 0.166
-    Diffusiveness: 0.556
-    Radius: 6.86
+    Modi:
+      Collider:
+        Projectile:
+          Particles:
+            2112: 146
+            2212: 92
+          Saturation_Density: 0.166
+          Diffusiveness: 0.556
+          Radius: 6.86
   )"};
   // verifies that deformed Woods-Saxon is indeed 0 for some arbitrary values
   DeformedNucleus dnucleus1(conf1, 1, false);
@@ -184,12 +239,15 @@ TEST(nucleon_density) {
   // config with values for an easy analytic deformed Woods-Saxon value
   // Lead core with default values
   Configuration conf2{R"(
-    Particles:
-      2112: 126
-      2212: 82
-    Saturation_Density: 0.161
-    Diffusiveness: 0.54
-    Radius: 6.67
+    Modi:
+      Collider:
+        Projectile:
+          Particles:
+            2112: 126
+            2212: 82
+          Saturation_Density: 0.161
+          Diffusiveness: 0.54
+          Radius: 6.67
   )"};
   // verifies that deformed Woods-Saxon is indeed 0.5
   DeformedNucleus dnucleus2(conf2, 1, false);
@@ -214,7 +272,7 @@ TEST(nucleon_density_norm) {
     // Transform integral from (0, oo) to (0, 1) via r = (1 - t) / t.
     const auto result = integrate(0, 1, -1, 1, [&](double t, double cosx) {
       const double r = (1 - t) / t;
-      return twopi * square(r) * nucl.nucleon_density(r, cosx, 0.0) / square(t);
+      return twopi * r * r * nucl.nucleon_density(r, cosx, 0.0) / (t * t);
     });
     const size_t Z = nucl.number_of_protons(), A = nucl.number_of_particles();
     logg[0].debug() << "Z: " << Z << "  A: " << A << '\n'

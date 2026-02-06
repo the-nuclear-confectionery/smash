@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2024
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -33,11 +33,11 @@ static constexpr int LFindScatter = LogArea::FindScatter::id;
 
 ScatterActionsFinder::ScatterActionsFinder(
     Configuration& config, const ExperimentParameters& parameters)
-    : finder_parameters_(create_finder_parameters(config, parameters)),
-      isotropic_(config.take({"Collision_Term", "Isotropic"}, false)),
+    : finder_parameters_(config, parameters),
+      isotropic_(config.take(InputKeys::collTerm_isotropic)),
       box_length_(parameters.box_length),
-      string_formation_time_(config.take(
-          {"Collision_Term", "String_Parameters", "Formation_Time"}, 1.)) {
+      string_formation_time_(
+          config.take(InputKeys::collTerm_stringParam_formationTime)) {
   if (is_constant_elastic_isotropic()) {
     logg[LFindScatter].info(
         "Constant elastic isotropic cross-section mode:", " using ",
@@ -102,39 +102,36 @@ ScatterActionsFinder::ScatterActionsFinder(
   }
 
   if (finder_parameters_.strings_switch) {
-    auto subconfig = config.extract_sub_configuration(
-        {"Collision_Term", "String_Parameters"}, Configuration::GetEmpty::Yes);
     string_process_interface_ = std::make_unique<StringProcess>(
-        subconfig.take({"String_Tension"}, 1.0), string_formation_time_,
-        subconfig.take({"Gluon_Beta"}, 0.5),
-        subconfig.take({"Gluon_Pmin"}, 0.001),
-        subconfig.take({"Quark_Alpha"}, 2.0),
-        subconfig.take({"Quark_Beta"}, 7.0),
-        subconfig.take({"Strange_Supp"}, 0.16),
-        subconfig.take({"Diquark_Supp"}, 0.036),
-        subconfig.take({"Sigma_Perp"}, 0.42),
-        subconfig.take({"StringZ_A_Leading"}, 0.2),
-        subconfig.take({"StringZ_B_Leading"}, 2.0),
-        subconfig.take({"StringZ_A"}, 2.0), subconfig.take({"StringZ_B"}, 0.55),
-        subconfig.take({"String_Sigma_T"}, 0.5),
-        subconfig.take({"Form_Time_Factor"}, 1.0),
-        subconfig.take({"Mass_Dependent_Formation_Times"}, false),
-        subconfig.take({"Prob_proton_to_d_uu"}, 1. / 3.),
-        subconfig.take({"Separate_Fragment_Baryon"}, true),
-        subconfig.take({"Popcorn_Rate"}, 0.15),
-        subconfig.take({"Use_Monash_Tune"},
-                       parameters.use_monash_tune_default.value()));
+        config.take(InputKeys::collTerm_stringParam_stringTension),
+        string_formation_time_,
+        config.take(InputKeys::collTerm_stringParam_gluonBeta),
+        config.take(InputKeys::collTerm_stringParam_gluonPMin),
+        config.take(InputKeys::collTerm_stringParam_quarkAlpha),
+        config.take(InputKeys::collTerm_stringParam_quarkBeta),
+        config.take(InputKeys::collTerm_stringParam_strangeSuppression),
+        config.take(InputKeys::collTerm_stringParam_diquarkSuppression),
+        config.take(InputKeys::collTerm_stringParam_sigmaPerp),
+        config.take(InputKeys::collTerm_stringParam_stringZALeading),
+        config.take(InputKeys::collTerm_stringParam_stringZBLeading),
+        config.take(InputKeys::collTerm_stringParam_stringZA),
+        config.take(InputKeys::collTerm_stringParam_stringZB),
+        config.take(InputKeys::collTerm_stringParam_stringSigmaT),
+        config.take(InputKeys::collTerm_stringParam_formTimeFactor),
+        config.take(InputKeys::collTerm_stringParam_mDependentFormationTimes),
+        config.take(InputKeys::collTerm_stringParam_probabilityPToDUU),
+        config.take(InputKeys::collTerm_stringParam_separateFragmentBaryon),
+        config.take(InputKeys::collTerm_stringParam_popcornRate),
+        config.take(InputKeys::collTerm_stringParam_useMonashTune,
+                    parameters.use_monash_tune_default.value()));
   }
 }
 
-ScatterActionsFinderParameters create_finder_parameters(
-    Configuration& config, const ExperimentParameters& parameters) {
-  std::pair<double, double> sqrts_range_Npi =
-      config.take({"Collision_Term", "String_Transition", "Sqrts_Range_Npi"},
-                  InputKeys::collTerm_stringTrans_rangeNpi.default_value());
-  std::pair<double, double> sqrts_range_NN =
-      config.take({"Collision_Term", "String_Transition", "Sqrts_Range_NN"},
-                  InputKeys::collTerm_stringTrans_rangeNN.default_value());
+static StringTransitionParameters create_string_transition_parameters(
+    Configuration& config) {
+  auto sqrts_range_Npi = config.take(InputKeys::collTerm_stringTrans_rangeNpi);
+  auto sqrts_range_NN = config.take(InputKeys::collTerm_stringTrans_rangeNN);
+
   if (sqrts_range_Npi.first < nucleon_mass + pion_mass) {
     sqrts_range_Npi.first = nucleon_mass + pion_mass;
     if (sqrts_range_Npi.second < sqrts_range_Npi.first)
@@ -153,10 +150,46 @@ ScatterActionsFinderParameters create_finder_parameters(
         "threshold. New range is [",
         sqrts_range_NN.first, ',', sqrts_range_NN.second, "] GeV.");
   }
-  auto xs_strategy =
-      config.take({"Collision_Term", "Total_Cross_Section_Strategy"},
-                  InputKeys::collTerm_totXsStrategy.default_value());
-  if (xs_strategy == TotalCrossSectionStrategy::BottomUp) {
+
+  return {sqrts_range_Npi,
+          sqrts_range_NN,
+          config.take(InputKeys::collTerm_stringTrans_lower),
+          config.take(InputKeys::collTerm_stringTrans_range_width),
+          config.take(InputKeys::collTerm_stringTrans_pipiOffset),
+          config.take(InputKeys::collTerm_stringTrans_KNOffset)};
+}
+
+ScatterActionsFinderParameters::ScatterActionsFinderParameters(
+    Configuration& config, const ExperimentParameters& parameters)
+    : elastic_parameter(config.take(InputKeys::collTerm_elasticCrossSection)),
+      low_snn_cut(parameters.low_snn_cut),
+      scale_xs(parameters.scale_xs),
+      additional_el_xs(
+          config.take(InputKeys::collTerm_additionalElasticCrossSection)),
+      maximum_cross_section(parameters.maximum_cross_section),
+      coll_crit(parameters.coll_crit),
+      nnbar_treatment(parameters.nnbar_treatment),
+      included_2to2(parameters.included_2to2),
+      included_multi(parameters.included_multi),
+      testparticles(parameters.testparticles),
+      two_to_one(parameters.two_to_one),
+      allow_collisions_within_nucleus(
+          config.take(InputKeys::modi_collider_collisionWithinNucleus)),
+      spin_interaction_type(parameters.spin_interaction_type),
+      strings_switch(parameters.strings_switch),
+      use_AQM(config.take(InputKeys::collTerm_useAQM)),
+      strings_with_probability(
+          config.take(InputKeys::collTerm_stringsWithProbability)),
+      only_warn_for_high_prob(
+          config.take(InputKeys::collTerm_onlyWarnForHighProbability)),
+      transition_high_energy{create_string_transition_parameters(config)},
+      total_xs_strategy(config.take(InputKeys::collTerm_totXsStrategy)),
+      pseudoresonance_method(config.take(InputKeys::collTerm_pseudoresonance)),
+      AQM_charm_suppression(
+          config.take(InputKeys::collTerm_HF_AQMcSuppression)),
+      AQM_bottom_suppression(
+          config.take(InputKeys::collTerm_HF_AQMbSuppression)) {
+  if (total_xs_strategy == TotalCrossSectionStrategy::BottomUp) {
     logg[LFindScatter].info(
         "Evaluating total cross sections from partial processes.");
   } else if (parameters.included_2to2[IncludedReactions::Elastic] == 1 &&
@@ -165,47 +198,20 @@ ScatterActionsFinderParameters create_finder_parameters(
         "The BottomUp strategy for total cross section evaluation is needed to "
         "have only elastic interactions, please change the configuration "
         "accordingly.");
-  } else if (xs_strategy == TotalCrossSectionStrategy::TopDown) {
+  } else if (total_xs_strategy == TotalCrossSectionStrategy::TopDown) {
     logg[LFindScatter].info(
         "Evaluating total cross sections from parametrizations.");
-  } else if (xs_strategy == TotalCrossSectionStrategy::TopDownMeasured) {
+  } else if (total_xs_strategy == TotalCrossSectionStrategy::TopDownMeasured) {
     logg[LFindScatter].info(
         "Evaluating total cross sections from parametrizations only for "
         "measured processes.");
   }
-  return {
-      config.take({"Collision_Term", "Elastic_Cross_Section"}, -1.),
-      parameters.low_snn_cut,
-      parameters.scale_xs,
-      config.take({"Collision_Term", "Additional_Elastic_Cross_Section"}, 0.0),
-      parameters.maximum_cross_section,
-      parameters.coll_crit,
-      parameters.nnbar_treatment,
-      parameters.included_2to2,
-      parameters.included_multi,
-      parameters.testparticles,
-      parameters.two_to_one,
-      config.take({"Modi", "Collider", "Collisions_Within_Nucleus"}, false),
-      parameters.strings_switch,
-      config.take({"Collision_Term", "Use_AQM"}, true),
-      config.take({"Collision_Term", "Strings_with_Probability"}, true),
-      config.take({"Collision_Term", "Only_Warn_For_High_Probability"}, false),
-      StringTransitionParameters{
-          sqrts_range_Npi, sqrts_range_NN,
-          config.take({"Collision_Term", "String_Transition", "Sqrts_Lower"},
-                      InputKeys::collTerm_stringTrans_lower.default_value()),
-          config.take(
-              {"Collision_Term", "String_Transition", "Sqrts_Range_Width"},
-              InputKeys::collTerm_stringTrans_range_width.default_value()),
-          config.take(
-              {"Collision_Term", "String_Transition", "PiPi_Offset"},
-              InputKeys::collTerm_stringTrans_pipiOffset.default_value()),
-          config.take(
-              {"Collision_Term", "String_Transition", "KN_Offset"},
-              InputKeys::collTerm_stringTrans_KNOffset.default_value())},
-      xs_strategy,
-      config.take({"Collision_Term", "Pseudoresonance"},
-                  InputKeys::collTerm_pseudoresonance.default_value())};
+
+  if (AQM_charm_suppression < 0 || AQM_bottom_suppression < 0 ||
+      AQM_charm_suppression > 1 || AQM_bottom_suppression > 1) {
+    throw std::invalid_argument(
+        "Suppression factors for AQM should be between 0 and 1.");
+  }
 }
 
 ActionPtr ScatterActionsFinder::check_collision_two_part(
@@ -259,7 +265,8 @@ ActionPtr ScatterActionsFinder::check_collision_two_part(
   // Create ScatterAction object.
   ScatterActionPtr act = std::make_unique<ScatterAction>(
       data_a, data_b, time_until_collision, isotropic_, string_formation_time_,
-      box_length_, incoming_parametrized);
+      box_length_, incoming_parametrized,
+      finder_parameters_.spin_interaction_type);
 
   if (finder_parameters_.coll_crit == CollisionCriterion::Stochastic) {
     act->set_stochastic_pos_idx();
@@ -583,7 +590,8 @@ void ScatterActionsFinder::dump_reactions() const {
             A.set_4momentum(A.pole_mass(), mom, 0.0, 0.0);
             B.set_4momentum(B.pole_mass(), -mom, 0.0, 0.0);
             ScatterActionPtr act = std::make_unique<ScatterAction>(
-                A, B, time, isotropic_, string_formation_time_, -1, false);
+                A, B, time, isotropic_, string_formation_time_, -1, false,
+                finder_parameters_.spin_interaction_type);
             if (finder_parameters_.strings_switch) {
               act->set_string_interface(string_process_interface_.get());
             }
@@ -967,7 +975,8 @@ void ScatterActionsFinder::dump_cross_sections(
     const double sqrts = (a_data.momentum() + b_data.momentum()).abs();
     const ParticleList incoming = {a_data, b_data};
     ScatterActionPtr act = std::make_unique<ScatterAction>(
-        a_data, b_data, 0., isotropic_, string_formation_time_, -1, false);
+        a_data, b_data, 0., isotropic_, string_formation_time_, -1, false,
+        finder_parameters_.spin_interaction_type);
     if (finder_parameters_.strings_switch) {
       act->set_string_interface(string_process_interface_.get());
     }
@@ -1059,11 +1068,11 @@ void ScatterActionsFinder::dump_cross_sections(
   std::cout << "# Dumping partial " << a.name() << b.name()
             << " cross-sections in mb, energies in GeV" << std::endl;
   std::cout << "   sqrt_s";
-  // Align everything to 16 unicode characters.
-  // This should be enough for the longest channel name (7 final-state
-  // particles).
+  // Align everything to 24 unicode characters.
+  // This should be enough for the longest channel name: 7 final-state
+  // particles, or 2 of the longest named resonances (currently Ds0*(2317)⁺).
   for (const auto& channel : all_channels) {
-    std::cout << utf8::fill_left(channel, 16, ' ');
+    std::cout << utf8::fill_left(channel, 24, ' ');
   }
   std::cout << std::endl;
 

@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2013-2022
+ *    Copyright (c) 2013-2022,2024
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -10,18 +10,20 @@
 #ifndef SRC_INCLUDE_SMASH_MODUSDEFAULT_H_
 #define SRC_INCLUDE_SMASH_MODUSDEFAULT_H_
 
+#include <map>
 #include <memory>
+#include <vector>
 
 #include "configuration.h"
 #include "forwarddeclarations.h"
 #include "fourvector.h"
 #include "grandcan_thermalizer.h"
 #include "grid.h"
+#include "icparameters.h"
 #include "outputinterface.h"
 #include "potentials.h"
 
 namespace smash {
-
 /**
  * \ingroup modus
  * Base class for Modus classes that provides default function implementations.
@@ -104,12 +106,38 @@ class ModusDefault {
    * \return passing_time
    */
   double nuclei_passing_time() const { return 0.0; }
+  /// \return Whether this is an initial condition for hydrodynamics
+  bool is_IC_for_hybrid() const { return false; }
+  /// \return IC parameters in ColliderModus
+  const InitialConditionParameters& IC_parameters() const {
+    throw std::logic_error(
+        "Only ColliderModus has parameters for initial conditions.");
+  }
+  /// \return Background energy density map
+  const std::map<int32_t, double>& fluid_background() {
+    throw std::logic_error("Only ColliderModus has a fluid background.");
+  }
+  /// \return Lattice where fluidization is calculated
+  const RectangularLattice<EnergyMomentumTensor>& fluid_lattice() {
+    throw std::logic_error("Only ColliderModus has a fluid lattice.");
+  }
 
+  /**
+   * Build lattice of energy momentum tensor. Currently only implemented in
+   * Collider modus.
+   * \param[in] t Current time.
+   * \param[in] ensembles Only the first Particles element is actually used.
+   * \param[in] dens_par Contains parameters for density smearing.
+   */
+  void build_fluidization_lattice(
+      [[maybe_unused]] const double t,
+      [[maybe_unused]] const std::vector<Particles>& ensembles,
+      [[maybe_unused]] const DensityParameters& dens_par) {}
   /**
    * Creates the Grid with normal boundary conditions.
    *
    * \param[in] particles The Particles object containing all particles of the
-   *                  currently running Experiment.
+   * currently running Experiment.
    * \param[in] min_cell_length The minimal length of the grid cells.
    * \param[in] timestep_duration Duration of the timestep. It is necessary for
    * formation times treatment: if particle is fully or partially formed before
@@ -152,7 +180,8 @@ class ModusDefault {
        If one wants to have a central cell with center at 0,0,0 then
        number of cells should be odd (2k+1) in every direction.
      */
-    const std::array<double, 3> l = conf.take({"Lattice_Sizes"});
+    const std::array<double, 3> l =
+        conf.take(InputKeys::forcedThermalization_latticeSizes);
     const std::array<double, 3> origin = {-0.5 * l[0], -0.5 * l[1],
                                           -0.5 * l[2]};
     const bool periodicity = false;

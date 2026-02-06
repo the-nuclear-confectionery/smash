@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2023,2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -131,8 +131,9 @@ std::ostream& operator<<(std::ostream& os, ProcessType process_type) {
     case ProcessType::Thermalization:
       os << "Thermalization";
       break;
-    case ProcessType::HyperSurfaceCrossing:
-      os << "Hypersurface crossing";
+    case ProcessType::Fluidization:
+    case ProcessType::FluidizationNoRemoval:
+      os << "Fluidization";
       break;
     case ProcessType::MultiParticleThreeMesonsToOne:
       os << "ThreeMesonsToOne";

@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2015,2017-2020,2022-2023
+ *    Copyright (c) 2014-2015,2017-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -114,6 +114,11 @@ TEST_CATCH(init_zero_dt, std::range_error) {
   UniformClock labtime(4.4, 0.0, 300);
 }
 
+TEST_CATCH(set_zero_dt, std::range_error) {
+  UniformClock labtime(4.4, 0.2, 300.0);
+  labtime.set_timestep_duration(0.0);
+}
+
 TEST_CATCH(init_negative_dt, std::range_error) {
   UniformClock labtime(4.4, -0.2, 300.0);
 }
@@ -156,4 +161,37 @@ TEST_CATCH(overflow_large_increment, std::overflow_error) {
   ++labtime;
   ++labtime;
   labtime += (std::numeric_limits<Clock::Representation>::max() - 3);
+}
+
+TEST_CATCH(custom_clock_tick_beyond_last, std::out_of_range) {
+  CustomClock clock{{1, 2}};
+  // Start time is 0.0 and not ticking the clock gives it
+  VERIFY(clock.current_time() == 0);
+  ++clock;
+  VERIFY(clock.current_time() == 1);
+  ++clock;
+  VERIFY(clock.current_time() == 2);
+  ++clock;
+  clock.current_time();
+}
+TEST_CATCH(custom_clock_tick_till_end_ask_next_time, std::out_of_range) {
+  CustomClock clock{{42}};
+  ++clock;
+  clock.next_time();
+}
+
+TEST_CATCH(custom_clock_remove_times_in_the_past, std::out_of_range) {
+  CustomClock clock{{
+      -3.14,
+      -0.1,
+      0.0,
+      42,
+  }};
+  clock.remove_times_in_past(0.0);
+  // Start time is 0.0 and not ticking the clock gives it
+  VERIFY(clock.current_time() == 0.0);
+  ++clock;
+  VERIFY(clock.current_time() == 42);
+  ++clock;
+  clock.current_time();
 }

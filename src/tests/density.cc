@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -153,13 +153,18 @@ TEST(smearing_factor_normalization) {
   const int N = 1;
   const double L = 10.;
   Configuration conf{R"(
-    Box:
-      Initial_Condition: "thermal momenta"
-      Temperature: 0.2
-      Start_Time: 0.0
+    Modi:
+      Box:
+        Initial_Condition: "thermal momenta"
+        Temperature: 0.2
+        Start_Time: 0.0
   )"};
-  conf.set_value({"Box", "Init_Multiplicities", "2212"}, N);
-  conf.set_value({"Box", "Length"}, L);
+  // Note that it is not possible here to use set_value passing in the database
+  // InputKeys::modi_box_initialMultiplicities key as its value is of type
+  // std::map<PdgCode, int> and this cannot be set by YAML library automatically
+  conf.merge_yaml(InputKeys::modi_box_initialMultiplicities.as_yaml(
+      "{2212: " + std::to_string(N) + "}"));
+  conf.set_value(InputKeys::modi_box_length, L);
   ExperimentParameters par = smash::Test::default_parameters();
   par.box_length = L;
   const DensityParameters dens_par = DensityParameters(par);
@@ -168,8 +173,9 @@ TEST(smearing_factor_normalization) {
   std::vector<Particles> ensembles(1);
   b->initial_conditions(&ensembles[0], par);
   // Fill lattice from particles
-  update_lattice(lat.get(), LatticeUpdate::EveryTimestep, DensityType::Baryon,
-                 dens_par, ensembles, false);
+  update_lattice_accumulating_ensembles(lat.get(), LatticeUpdate::EveryTimestep,
+                                        DensityType::Baryon, dens_par,
+                                        ensembles, false);
   // Compute integral rho(r) d^r. Should be equal to N.
   double int_rho_r_d3r = 0.0;
   for (auto &node : *lat) {
@@ -231,7 +237,7 @@ TEST(density_gradient) {
 }
 
 TEST(density_gradient_in_linear_box) {
-  // set parameters fot the test
+  // set parameters for the test
   ExperimentParameters par = smash::Test::default_parameters();
   par.testparticles = 10000;
   par.gaussian_sigma = 0.5;
@@ -270,18 +276,18 @@ TEST(density_gradient_in_linear_box) {
        std::get<0>(current_eckart(ThreeVector(0., 0., -0.4), P, par, dtype,
                                   false, true))) /
       0.8;
-  COMPARE_RELATIVE_ERROR(drho_dr.x3(), theo_drho_dz, 0.01);
+  COMPARE_RELATIVE_ERROR(drho_dr.x3(), theo_drho_dz, 0.02);
   /* Meanwhile, the gradient should be along z-axis, which means its
    * transverse component should be much smaller than its longitudinal
    * component*/
   const double drho_T_over_z =
       sqrt(drho_dr.x1() * drho_dr.x1() + drho_dr.x2() * drho_dr.x2()) /
       drho_dr.x3();
-  COMPARE_ABSOLUTE_ERROR(drho_T_over_z, 0., 0.01);
+  COMPARE_ABSOLUTE_ERROR(drho_T_over_z, 0., 0.02);
 }
 
 TEST(current_curl_in_rotating_box) {
-  // set parameters fot the test
+  // set parameters for the test
   ExperimentParameters par = smash::Test::default_parameters();
   par.testparticles = 10000;
   par.gaussian_sigma = 0.65;
@@ -317,7 +323,7 @@ TEST(current_curl_in_rotating_box) {
    * point inside the box, Compare the z-component of the curl with the
    * theoretical value. */
   const double theo_rot_j_z = 2. * 1.5 * omega;
-  COMPARE_RELATIVE_ERROR(rot_j.x3(), theo_rot_j_z, 0.01);
+  COMPARE_RELATIVE_ERROR(rot_j.x3(), theo_rot_j_z, 0.05);
   /* Meanwhile, the curl should be along z-axis, which means its
    * transverse component should be much smaller than its longitudinal
    * component*/

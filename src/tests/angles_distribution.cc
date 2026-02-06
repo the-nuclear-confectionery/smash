@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014,2017-2019,2022
+ *    Copyright (c) 2014,2017-2019,2022,2024
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -26,9 +26,9 @@ int main() {
   for (int c = 0; c < NUMBER; c++) {
     Angles dir;
     dir.distribute_isotropically();
-    phi_histo[static_cast<int>(floor(dir.phi() / dangle))]++;
-    theta_histo[static_cast<int>(floor(dir.theta() / dangle))]++;
-    cos_histo[static_cast<int>(floor((dir.costheta() + 1.0) / dcosine))]++;
+    phi_histo[static_cast<int>(std::floor(dir.phi() / dangle))]++;
+    theta_histo[static_cast<int>(std::floor(dir.theta() / dangle))]++;
+    cos_histo[static_cast<int>(std::floor((dir.costheta() + 1.0) / dcosine))]++;
 
     // print some of the vectors for plotting and visual checking:
     if (c % 500 == 0)

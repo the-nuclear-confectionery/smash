@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2022-2023
+ *    Copyright (c) 2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -57,12 +57,25 @@ struct StringTransitionParameters {
 };
 
 /**
- * Helper structure for ScatterActionsFinder.
+ * Helper class for ScatterActionsFinder.
  *
- * ScatterActionsFinder has one member of this struct, which just collects
- * general parameters, for easier function argument passing.
+ * ScatterActionsFinder has one member of this class, which just collects
+ * general parameters, for easier function argument passing. In practice it is
+ * almost a POD structure containing constants defined externally, but allows
+ * for methods that depend on simple inputs, such as AQM_scaling_factor.
  */
-struct ScatterActionsFinderParameters {
+class ScatterActionsFinderParameters {
+ public:
+  /**
+   * Class constructor.
+   * \param[in] config The relevant section from the user configuration
+   * \param[in] parameters The Experiment parameters
+   *
+   * \throw std::invalid_argument If configuration parameters are physically
+   * invalid
+   */
+  ScatterActionsFinderParameters(Configuration& config,
+                                 const ExperimentParameters& parameters);
   /// Elastic cross section parameter (in mb).
   const double elastic_parameter;
   /**
@@ -96,6 +109,8 @@ struct ScatterActionsFinderParameters {
   /// If particles within the same nucleus are allowed to collide for their
   /// first time
   const bool allow_collisions_within_nucleus;
+  /// Switch to control whether to include spin interactions
+  const SpinInteractionType spin_interaction_type;
   /// Indicates whether string fragmentation is switched on
   const bool strings_switch;
   /// Switch to control whether to use AQM or not
@@ -123,6 +138,27 @@ struct ScatterActionsFinderParameters {
   const TotalCrossSectionStrategy total_xs_strategy;
   /// Which pseudo-resonance to choose.
   const PseudoResonance pseudoresonance_method;
+
+  /**
+   * AQM scaling factor for a hadron. The suppression factor for strangeness is
+   * fixed to 40%, while the charm and bottom can be configured.
+   *
+   * \param[in] pdg of the particle
+   */
+  double AQM_scaling_factor(const PdgCode& pdg) const {
+    return (1 - AQM_strange_suppression * pdg.frac_strange()) *
+           (1 - AQM_charm_suppression * pdg.frac_charm()) *
+           (1 - AQM_bottom_suppression * pdg.frac_bottom());
+  }
+
+ private:
+  /// Factor to reduce cross sections for strange hadrons, this is currently
+  /// fixed.
+  const double AQM_strange_suppression = 0.4;
+  /// Factor to reduce cross sections for charmed hadrons
+  const double AQM_charm_suppression;
+  /// Factor to reduce cross sections for bottomed hadrons
+  const double AQM_bottom_suppression;
 };
 
 }  // namespace smash

@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2024
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -129,8 +129,10 @@ double Action::perform(Particles *particles, uint32_t id_process) {
   assert(id_process != 0);
   double energy_violation = 0.;
   for (ParticleData &p : outgoing_particles_) {
-    // store the history info
-    if (process_type_ != ProcessType::Wall) {
+    /* Store the history info. Wall crossing and fluidization don't change the
+     * last collision a particle went through. */
+    if ((process_type_ != ProcessType::Wall) &&
+        (process_type_ != ProcessType::FluidizationNoRemoval)) {
       p.set_history(p.get_history().collisions_per_particle + 1, id_process,
                     process_type_, time_of_execution_, incoming_particles_);
     }
@@ -139,9 +141,10 @@ double Action::perform(Particles *particles, uint32_t id_process) {
   /* For elastic collisions and box wall crossings it is not necessary to remove
    * particles from the list and insert new ones, it is enough to update their
    * properties. */
-  particles->update(incoming_particles_, outgoing_particles_,
-                    (process_type_ != ProcessType::Elastic) &&
-                        (process_type_ != ProcessType::Wall));
+  const bool replace = (process_type_ != ProcessType::Elastic) &&
+                       (process_type_ != ProcessType::Wall) &&
+                       (process_type_ != ProcessType::FluidizationNoRemoval);
+  particles->update(incoming_particles_, outgoing_particles_, replace);
 
   logg[LAction].debug("Particle map now has ", particles->size(), " elements.");
 
@@ -469,6 +472,12 @@ void Action::sample_manybody_phasespace() {
   sample_manybody_phasespace_impl(sqrt_s(), m, p);
   for (size_t i = 0; i < n; i++) {
     outgoing_particles_[i].set_4momentum(p[i]);
+  }
+}
+
+void Action::assign_unpolarized_spin_vector_to_outgoing_particles() {
+  for (ParticleData &p : outgoing_particles_) {
+    p.set_unpolarized_spin_vector();
   }
 }
 

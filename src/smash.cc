@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2012-2023
+ *    Copyright (c) 2012-2024
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -341,11 +341,17 @@ void check_for_unused_config_values(const Configuration &configuration) {
  * outputs cross sections, resonance properties or possible reactions.
  */
 void ignore_simulation_config_values(Configuration &configuration) {
-  for (const std::string s :
-       {"particles", "decaymodes", "Modi", "General", "Output", "Lattice",
-        "Potentials", "Forced_Thermalization"}) {
-    if (configuration.has_value({s.c_str()})) {
-      configuration.take({s.c_str()});
+  for (const auto &key : {InputKeys::particles, InputKeys::decaymodes}) {
+    if (configuration.has_value(key)) {
+      configuration.take(key);
+    }
+  }
+  for (const auto &section :
+       {InputSections::modi, InputSections::general, InputSections::output,
+        InputSections::lattice, InputSections::potentials,
+        InputSections::forcedThermalization}) {
+    if (configuration.has_section(section)) {
+      configuration.extract_sub_configuration(section).clear();
     }
   }
 }
@@ -629,16 +635,16 @@ int main(int argc, char *argv[]) {
       std::exit(EXIT_SUCCESS);
     }
     if (modus) {
-      configuration.set_value({"General", "Modus"}, std::string(modus));
+      configuration.set_value(InputKeys::gen_modus, std::string(modus));
     }
     if (end_time) {
-      configuration.set_value({"General", "End_Time"},
+      configuration.set_value(InputKeys::gen_endTime,
                               std::abs(std::atof(end_time)));
     }
 
-    int64_t seed = configuration.read({"General", "Randomseed"});
+    int64_t seed = configuration.read(InputKeys::gen_randomseed);
     if (seed < 0) {
-      configuration.set_value({"General", "Randomseed"},
+      configuration.set_value(InputKeys::gen_randomseed,
                               random::generate_63bit_seed());
     }
 
@@ -673,18 +679,14 @@ int main(int argc, char *argv[]) {
         << "# Date     : " << BUILD_DATE << '\n'
         << configuration.to_string() << '\n';
 
-    initialize_particles_decays_and_tabulations(configuration, version,
-                                                tabulations_path);
+    const auto hash =
+        initialize_particles_decays_and_return_hash(configuration, version);
 
     // Create an experiment
     logg[LMain].trace(SMASH_SOURCE_LOCATION, " create Experiment");
     auto experiment = ExperimentBase::create(configuration, output_path);
-
-    // Version key is deprecated. If present, ignore it.
-    if (configuration.has_value({"Version"})) {
-      configuration.take({"Version"});
-    }
     check_for_unused_config_values(configuration);
+    tabulate_resonance_integrals(hash, tabulations_path);
 
     // Run the experiment
     logg[LMain].trace(SMASH_SOURCE_LOCATION, " run the Experiment");

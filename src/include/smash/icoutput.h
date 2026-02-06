@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2019-2020,2022-2023
+ *    Copyright (c) 2019-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -18,15 +18,15 @@
 #include "outputinterface.h"
 #include "outputparameters.h"
 #include "smash/config.h"
-
+#include "smash/outputformatter.h"
 namespace smash {
 
 /**
  * \ingroup output
  *
- * SMASH output in ASCII format containing initial conditions for hydrodynamic
- * codes. Formatted such that it can be directly processed by vHLLE
- * \iref{Karpenko:2015xea}.
+ * SMASH output in a format containing initial conditions for hydrodynamic
+ * codes ("For_vHLLE"). Formatted such that it can be directly processed by
+ * vHLLE \iref{Karpenko:2015xea}.
  */
 class ICOutput : public OutputInterface {
  public:
@@ -43,25 +43,26 @@ class ICOutput : public OutputInterface {
 
   /**
    * Write event start line.
-   * \param[in] event_number Number of the current event.
+   * \param[in] event_label Numbers of the current event and ensemble.
+   * \param[in] event Event info, see \ref event_info
    */
-  void at_eventstart(const Particles &, const int event_number,
-                     const EventInfo &) override;
+  void at_eventstart(const Particles &, const EventLabel &event_label,
+                     const EventInfo &event) override;
 
   /**
    * Write event end line.
    * \param[in] particles Particles at end of event, expected to be empty
-   * \param[in] event_number Number of the current event.
+   * \param[in] event_label Numbers of the current event and ensemble.
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventend(const Particles &particles, const int event_number,
+  void at_eventend(const Particles &particles, const EventLabel &event_label,
                    const EventInfo &event) override;
 
   /**
    * Unused, but needed since virtually declared in mother class.
    */
   void at_intermediate_time(const Particles &, const std::unique_ptr<Clock> &,
-                            const DensityParameters &,
+                            const DensityParameters &, const EventLabel &,
                             const EventInfo &) override;
   /**
    * Write particle data at the hypersurface crossing point to the IC output.
@@ -86,6 +87,9 @@ class ICOutput : public OutputInterface {
    * in at_interaction().
    */
   double IC_proper_time_ = -1.0;
+
+  /// Formatter of the output
+  OutputFormatter<ToASCII> formatter_;
 };
 
 }  // namespace smash

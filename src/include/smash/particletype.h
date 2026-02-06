@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2012-2021,2023-2024
+ *    Copyright (c) 2012-2021,2023-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -236,6 +236,9 @@ class ParticleType {
   /// \copydoc PdgCode::is_Nstar1535
   bool is_Nstar1535() const { return pdgcode_.is_Nstar1535(); }
 
+  /// \return Is this a Sigma resonance (Sigma*)?
+  inline bool is_Sigmastar() const { return pdgcode_.is_Sigmastar(); }
+
   /// \return Is this a Delta resonance (Delta*)?
   inline bool is_Deltastar() const {
     return is_baryon() && isospin() == 3 && !pdgcode_.is_Delta() &&
@@ -258,6 +261,9 @@ class ParticleType {
   inline bool is_dprime() const {
     return is_nucleus() && std::abs(pdgcode_.get_decimal()) == 1000010021;
   }
+
+  /// \return whether the particle is a cc̅ state
+  inline bool is_charmonia() const { return pdgcode_.is_charmonia(); }
 
   /**
    * The minimum mass of the resonance that is kinematically allowed.

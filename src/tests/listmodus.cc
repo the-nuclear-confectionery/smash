@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2017-2020,2022-2023
+ *    Copyright (c) 2017-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -56,7 +56,7 @@ static std::filesystem::path create_particlefile(
     const bool empty_event = false;        // just a dummy value as well
     EventInfo default_event_info =
         Test::default_event_info(impact_parameter, empty_event);
-    osc2013final->at_eventend(particles, event, default_event_info);
+    osc2013final->at_eventend(particles, {event, 0}, default_event_info);
   }
 
   // release and let destructor rename the file
@@ -64,10 +64,9 @@ static std::filesystem::path create_particlefile(
 
   VERIFY(std::filesystem::exists(outputfilepath));
   // Rename the oscar file to match listmodus format
-  const std::string pathstring = "event" + std::to_string(file_number);
-  const std::filesystem::path listinputfile = pathstring;
-  const std::filesystem::path inputfilepath = testoutputpath / listinputfile;
-  std::rename(outputfilepath.native().c_str(), inputfilepath.native().c_str());
+  const std::filesystem::path inputfilepath =
+      testoutputpath / ("event" + std::to_string(file_number));
+  std::filesystem::rename(outputfilepath, inputfilepath);
 
   VERIFY(std::filesystem::exists(inputfilepath));
 
@@ -97,37 +96,83 @@ static void create_non_oscar_particlefile(
       tmp_file << line << '\n';
     }
   }
-  std::rename(tmp_path.native().c_str(), input_path.native().c_str());
+  std::filesystem::rename(tmp_path, input_path);
+}
+
+static void create_particle_file_with_multiple_particles_at_same_position(
+    const OutputParameters out_par) {
+  std::unique_ptr<OutputInterface> oscar_output =
+      create_oscar_output("Oscar2013", "Particles", testoutputpath, out_par);
+
+  const std::filesystem::path outputfilename = "particle_lists.oscar";
+  const std::filesystem::path outputfilepath = testoutputpath / outputfilename;
+
+  // Create some random particles with many at same 4-position
+  for (int event = 0; event < 2; event++) {
+    Particles particles;
+    for (int i = 0; i < 3; i++) {
+      particles.insert(Test::smashon_random());
+    }
+    auto particle = Test::smashon_random();
+    for (int i = 0; i < event * 3; i++) {
+      particles.insert(particle);
+      particle.boost_momentum({0.1, 0.2, 0.3});
+    }
+    particle = Test::smashon_random();
+    for (int i = 0; i < event + 3; i++) {
+      particles.insert(particle);
+      particle.boost_momentum({0.01, 0.02, 0.03});
+    }
+
+    // Print them to file in OSCAR 2013 format
+    const double impact_parameter = 2.34;  // just a dummy value here
+    const bool empty_event = false;        // just a dummy value as well
+    EventInfo default_event_info =
+        Test::default_event_info(impact_parameter, empty_event);
+    oscar_output->at_eventend(particles, {event, 0}, default_event_info);
+  }
+
+  // release and let destructor rename the file
+  oscar_output.reset();
+
+  VERIFY(std::filesystem::exists(outputfilepath));
+  // Rename the oscar file to match listmodus format
+  const std::filesystem::path inputfilepath = testoutputpath / "event0";
+  std::filesystem::rename(outputfilepath, inputfilepath);
 }
 
 static ListModus create_list_modus_for_test() {
   Configuration config{R"(
-    List:
-      File_Directory: ToBeSet
-      File_Prefix: event
+    Modi:
+      List:
+        File_Directory: ToBeSet
+        File_Prefix: event
     )"};
-  config.set_value({"List", "File_Directory"}, testoutputpath.string());
+  config.set_value(InputKeys::modi_list_fileDirectory, testoutputpath.string());
   return ListModus(std::move(config), parameters);
 }
 
 static ListBoxModus create_list_box_modus_for_test() {
   Configuration config{R"(
-    ListBox:
-      File_Directory: ToBeSet
-      File_Prefix: event
-      Length: 3
+    Modi:
+      ListBox:
+        File_Directory: ToBeSet
+        File_Prefix: event
+        Length: 3
     )"};
-  config.set_value({"ListBox", "File_Directory"}, testoutputpath.string());
+  config.set_value(InputKeys::modi_listBox_fileDirectory,
+                   testoutputpath.string());
   return ListBoxModus(std::move(config), parameters);
 }
 
 static ListModus create_list_modus_with_single_file_for_test() {
   Configuration config{R"(
-    List:
-      File_Directory: ToBeSet
-      Filename: event0
+    Modi:
+      List:
+        File_Directory: ToBeSet
+        Filename: event0
     )"};
-  config.set_value({"List", "File_Directory"}, testoutputpath.string());
+  config.set_value(InputKeys::modi_list_fileDirectory, testoutputpath.string());
   return ListModus(std::move(config), parameters);
 }
 
@@ -519,16 +564,97 @@ TEST(try_create_particle_func) {
   }
 }
 
+TEST(try_create_particle_with_spin_func) {
+  // Create a ListModus with spin interactions enabled
+  const ExperimentParameters parameters_with_spin{
+      std::make_unique<UniformClock>(0., 0.1, 300.0),
+      std::make_unique<UniformClock>(0., 1., 300.0),
+      1,  // ensembles
+      1,  // testparticles
+      DerivativesMode::CovariantGaussian,
+      RestFrameDensityDerivativesMode::Off,
+      FieldDerivativesMode::ChainRule,
+      SmearingMode::CovariantGaussian,
+      1.0,
+      4.0,
+      0.333333,
+      2.0,
+      CollisionCriterion::Geometric,
+      true,
+      Test::all_reactions_included(),
+      Test::no_multiparticle_reactions(),
+      false,  // strings
+      1.0,
+      NNbarTreatment::NoAnnihilation,
+      0.,
+      false,
+      -1.0,
+      200.0,
+      2.5,
+      1.0,
+      false,
+      false,
+      true,
+      SpinInteractionType::On,
+      std::nullopt};
+
+  Configuration config{R"(
+    Modi:
+      List:
+        File_Directory: ToBeSet
+        File_Prefix: event
+    )"};
+  config.set_value(InputKeys::modi_list_fileDirectory, testoutputpath.string());
+  config.set_value(
+      InputKeys::modi_list_optionalQuantities,
+      std::vector<std::string>{"spin0", "spinx", "spiny", "spinz"});
+  ListModus list_modus = ListModus(std::move(config), parameters_with_spin);
+  Particles particles;
+  const ParticleData smashon = Test::smashon_random();
+  const FourVector r = smashon.position(), p = smashon.momentum();
+  const PdgCode pdg = smashon.pdgcode();
+  // Spin vector components as 4-vector and optional values
+  const FourVector spin_vec(0.1, 0.2, 0.3, 0.4);
+  const std::vector<std::string> opt_vals = {"0.1", "0.2", "0.3", "0.4"};
+  list_modus.try_create_particle(particles, pdg, r.x0(), r.x1(), r.x2(), r.x3(),
+                                 Test::smashon_mass, p.x0(), p.x1(), p.x2(),
+                                 p.x3(), opt_vals);
+
+  const ParticleList plist = particles.copy_to_vector();
+  const ParticleData created = plist.back();
+  compare_fourvector(created.spin_vector(), spin_vec);
+}
+
+TEST_CATCH(insert_optional_quantities_to_func, std::out_of_range) {
+  ListModus list_modus = create_list_modus_for_test();
+  Particles particles;
+  const double m0 = Test::smashon_mass;
+  const ParticleData smashon = Test::smashon_random();
+  const FourVector r = smashon.position(), p = smashon.momentum();
+  const PdgCode pdg = smashon.pdgcode();
+
+  // Create a particle with any optional_quantities handed to the function as
+  // last argument other than the default {} to trigger an out_of_range error.
+  list_modus.try_create_particle(particles, pdg, r.x0(), r.x1(), r.x2(), r.x3(),
+                                 m0, p.x0(), p.x1(), p.x2(), p.x3(), {"ID"});
+}
+
 TEST_CATCH(create_particle_with_nan, std::invalid_argument) {
   ListModus list_modus = create_list_modus_for_test();
   Particles particles;
   const double m0 = Test::smashon_mass;
-  ParticleData smashon = Test::smashon_random();
-  FourVector r = smashon.position(), p = smashon.momentum();
-  PdgCode pdg = smashon.pdgcode();
+  const ParticleData smashon = Test::smashon_random();
+  const FourVector r = smashon.position(), p = smashon.momentum();
+  const PdgCode pdg = smashon.pdgcode();
 
   // Create a particle with either a NAN value in the position
   // to trigger an invalid_argument error.
   list_modus.try_create_particle(particles, pdg, NAN, r.x1(), r.x2(), r.x3(),
                                  m0, p.x0(), p.x1(), p.x2(), p.x3());
+}
+
+TEST_CATCH(create_particles_at_same_position, ListModus::InvalidEvents) {
+  const OutputParameters out_par = OutputParameters();
+  create_particle_file_with_multiple_particles_at_same_position(out_par);
+  ListModus list_modus = create_list_modus_with_single_file_for_test();
 }

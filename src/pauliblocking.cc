@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2015-2020,2022
+ *    Copyright (c) 2015-2020,2022,2024
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -10,6 +10,7 @@
 #include "smash/pauliblocking.h"
 
 #include "smash/constants.h"
+#include "smash/input_keys.h"
 #include "smash/logging.h"
 
 namespace smash {
@@ -18,9 +19,9 @@ static constexpr int LPauliBlocking = LogArea::PauliBlocking::id;
 PauliBlocker::PauliBlocker(Configuration conf,
                            const ExperimentParameters &param)
     : sig_(param.gaussian_sigma),
-      rc_(conf.take({"Gaussian_Cutoff"}, 2.2)),
-      rr_(conf.take({"Spatial_Averaging_Radius"}, 1.86)),
-      rp_(conf.take({"Momentum_Averaging_Radius"}, 0.08)),
+      rc_(conf.take(InputKeys::collTerm_pauliBlocking_gaussianCutoff)),
+      rr_(conf.take(InputKeys::collTerm_pauliBlocking_spatialAveragingRadius)),
+      rp_(conf.take(InputKeys::collTerm_pauliBlocking_momentumAveragingRadius)),
       ntest_(param.testparticles),
       n_ensembles_(param.n_ensembles) {
   if (ntest_ * n_ensembles_ < 20) {
@@ -80,7 +81,7 @@ double PauliBlocker::phasespace_dens(const ThreeVector &r, const ThreeVector &p,
       // 1st order interpolation using tabulated values
       const double i_real =
           std::sqrt(rdist_sqr) / (rr_ + rc_) * weights_.size();
-      const size_t i = std::floor(i_real);
+      const size_t i = numeric_cast<size_t>(std::floor(i_real));
       const double rest = i_real - i;
       if (likely(i + 1 < weights_.size())) {
         f += weights_[i] * rest + weights_[i + 1] * (1. - rest);

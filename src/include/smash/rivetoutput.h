@@ -1,7 +1,7 @@
 /*
  *
  *    Copyright (c) 2021 Christian Holm Christensen
- *    Copyright (c) 2021-2022
+ *    Copyright (c) 2021-2022,2024
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -56,10 +56,10 @@ class RivetOutput : public HepMcInterface {
    * Store impact parameter and write event.
    *
    * \param[in] particles Current list of particles.
-   * \param[in] event_number Number of event.
+   * \param[in] event_label Event/ensemble numbers
    * \param[in] event Event info, see \ref event_info
    */
-  void at_eventend(const Particles& particles, const int32_t event_number,
+  void at_eventend(const Particles& particles, const EventLabel& event_label,
                    const EventInfo& event) override;
   /**
    * Add an analysis or analyses to Rivet

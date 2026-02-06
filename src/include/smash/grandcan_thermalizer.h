@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2016-2020,2022
+ *    Copyright (c) 2016-2020,2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -17,6 +17,7 @@
 #include "distributions.h"
 #include "forwarddeclarations.h"
 #include "hadgas_eos.h"
+#include "input_keys.h"
 #include "lattice.h"
 #include "particledata.h"
 #include "quantumnumbers.h"
@@ -213,11 +214,13 @@ class GrandCanThermalizer {
                       const std::array<double, 3> lat_sizes,
                       const std::array<double, 3> origin, bool periodicity)
       : GrandCanThermalizer(
-            lat_sizes, conf.take({"Cell_Number"}), origin, periodicity,
-            conf.take({"Critical_Edens"}), conf.take({"Start_Time"}),
-            conf.take({"Timestep"}),
-            conf.take({"Algorithm"}, ThermalizationAlgorithm::BiasedBF),
-            conf.take({"Microcanonical"}, false)) {}
+            lat_sizes, conf.take(InputKeys::forcedThermalization_cellNumber),
+            origin, periodicity,
+            conf.take(InputKeys::forcedThermalization_criticalEDensity),
+            conf.take(InputKeys::forcedThermalization_startTime),
+            conf.take(InputKeys::forcedThermalization_timestep),
+            conf.take(InputKeys::forcedThermalization_algorithm),
+            conf.take(InputKeys::forcedThermalization_microcanonical)) {}
   /**
    * Check that the clock is close to n * period of thermalization, since
    * the thermalization only happens at these times
@@ -328,10 +331,12 @@ class GrandCanThermalizer {
    * bool condition(int strangeness, int baryon_number, int charge);
    * \param[in] time Current time in simulation
    * \param[in] condition Specifies the actual mode (1 to 7)
+   * \param[in] spin_interaction_type Type of spin interactions to be considered
    */
   template <typename F>
-  ParticleData sample_in_random_cell_mode_algo(const double time,
-                                               F&& condition) {
+  ParticleData sample_in_random_cell_mode_algo(
+      const double time, F&& condition,
+      SpinInteractionType spin_interaction_type = SpinInteractionType::Off) {
     // Choose random cell, probability = N_in_cell/N_total
     double r = random::uniform(0.0, N_total_in_cells_);
     double partial_sum = 0.0;
@@ -373,6 +378,9 @@ class GrandCanThermalizer {
     particle.set_4momentum(m, phitheta.threevec() * momentum_radial);
     particle.boost_momentum(-cell.v());
     particle.set_formation_time(time);
+    if (spin_interaction_type != SpinInteractionType::Off) {
+      particle.set_unpolarized_spin_vector();
+    }
     return particle;
   }
 
@@ -383,16 +391,22 @@ class GrandCanThermalizer {
    * \param[in] conserved_initial Quantum numbers of the original particles
    * in the region to be thermalized
    * \param[in] time Current time of the simulation
+   * \param[in] spin_interaction_type Type of spin interactions to be considered
    */
-  void thermalize_mode_algo(QuantumNumbers& conserved_initial, double time);
+  void thermalize_mode_algo(
+      QuantumNumbers& conserved_initial, double time,
+      SpinInteractionType spin_interaction_type = SpinInteractionType::Off);
   /**
    * Main thermalize function, that chooses the algorithm to follow
    * (BF or mode sampling).
    * \param[out] particles List of sampled particles in thermalized region
    * \param[in] time Current time of the simulation
    * \param[in] ntest number of testparticles
+   * \param[in] spin_interaction_type Type of spin interactions to be considered
    */
-  void thermalize(const Particles& particles, double time, int ntest);
+  void thermalize(
+      const Particles& particles, double time, int ntest,
+      SpinInteractionType spin_interaction_type = SpinInteractionType::Off);
 
   /**
    * Generates standard output with information about the thermodynamic

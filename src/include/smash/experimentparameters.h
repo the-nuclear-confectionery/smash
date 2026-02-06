@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -145,13 +145,18 @@ struct ExperimentParameters {
    */
   bool only_participants;
 
-  /// Do weak decays at the end
-  bool do_weak_decays;
+  /// Do non-strong decays at the end
+  bool do_non_strong_decays;
 
   /**
    * Whether to decay initial state particles.
    */
   bool decay_initial_particles;
+
+  /**
+   * Whether to include spin interactions.
+   */
+  SpinInteractionType spin_interaction_type;
 
   /** Bool for the default usage of the monash tune in the collider modus.
    * The used type is std::optional since its value might not be known at

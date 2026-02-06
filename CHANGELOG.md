@@ -17,8 +17,116 @@ The major categories to group changes in this log are:
 
 Also possible, but for this project less relevant, is `Deprecated` for soon-to-be removed features.
 
-
 ## Unreleased
+
+
+## SMASH-3.3
+Date: 2025-12-03
+
+### Added
+* Added spin 4-vectors (Pauli-Lubanski) to particles including spin interactions. At the moment, spin interactions are treated in elastic scatterings and in inelastic scatterings through `Σ* → Λπ` formation. The spin vector is by default initialized unpolarized.
+* Heavy flavour particles can be treated as perturbative particles in inelastic interactions.
+
+### Changed
+* Update to Pythia8.316.
+* Cross sections for baryon-antibaryon interactions are now shifted w.r.t. the effective mass threshold in AQM rescaling.
+* The `ParticleData` class now initially sets the formation time and the time of the last collision to `NAN` and overwrites them with the real values the first time the objects are used. Previously, these values were initially set to `0.0`, which could be misleading if the time evolution started at negative times.
+* The procedure for dynamic initial conditions was updated, fluidized hadrons are no longer removed from the evolution, in order to provide energy density to the surrounding particles, being internally named as "core" particles. Core and corona (non-core) particles can only interact elastically.
+* The automatic lattice heuristic determination uses a minimum lattice size and has been disabled in `List` modus.
+* ⚠️ The `backpropagate_to_the_same_time` method is now a private member of `ListModus`. Its functionality was moved to the free function `backpropagate_straight_line`, which *does not set* the formation time or cross section scaling of particles.
+* The `only_res` boolean parameter of `find_final_actions` was removed in the base class `ActionsFindersInterface` and all its derived action classes.
+
+### Fixed
+* Properly take into account potentials at threshold in resonances decay channels selection.
+* Add better root finding for momentum dependent potentials.
+
+### Input
+* The `Sphere` modus now can include thermal heavy flavor particles, via the `Modi: Sphere: Heavy_Flavor_Multiplier` key, a value that multiplies their partial density.
+* Back to back jets were introduced to the `Sphere` modus with the  `Modi: Sphere: Jet: Back_To_Back` and `Modi: Sphere: Jet: Back_To_Back_Separation` keys.
+* The initial `Sphere` modus velocity profile can now be tuned with  `Modi: Sphere: Add_Radial_Velocity_Exponent`.
+* `ListModus` now accepts `Optional_Quantities`, extra to the default values used in Oscar2013.
+* Added the `Proper_Time_Scaling` key in the `Initial_Conditions` section under `Modi: Collider:` to scale the switching proper time when using constant tau initial conditions.
+* Added a new key `Collision_Term: Spin_Interactions` to enable spin interactions with values `On` and `Off`.
+* If `Spin_Interactions` is `On`, the `List` modus requires four additional columns representing the components of the spin 4-vector (s_0, s_1, s_2, s_3) and these shall be specified in the `Optional_Quantities` list.
+
+### Output
+* ⚠️ The previous `<content>_binary.bin` output files are now called `<content>_custom.bin`.
+* ⚠️ The previous `ASCII` option for `Output: Initial_Conditions: Format` key was renamed to `For_vHLLE`, and the corresponding file to `SMASH_IC_For_vHLLE.dat`. **This breaks the workflows for hybrid models using SMASH as initial conditions!**
+* `Dileptons`, `Photons`, and `Initial_Conditions` now accept the `ASCII` and `Binary` custom format, and require setting the desired `Quantities`.
+* Added `tau`, `eta_s`, `mt`, `y_rap`, `spin0`, `spinx`, `spiny`, `spinz`, and `perturbative_weight` as custom ASCII/binary quantity.
+* Improve writing performance of both ASCII and binary output formats by buffering information event by event.
+* The `formation_time` and `time_last_collision` TBranches in the ROOT output have been moved from the extended to the ordinary (default) output.
+
+[Link to diff from previous version](https://github.com/smash-transport/smash/compare/SMASH-3.2.2...SMASH-3.3)
+
+
+## SMASH-3.2.2
+Date: 2025-09-19
+
+### Fixed
+* Fix too strict energy-momentum conservation leading to failures at high energies
+
+### Changed
+* The `almost_equal` and `almost_equal_physics` functions to compare floating point numbers have been improved to perform a relative comparison à la Knuth (the latter considers numbers below a given threshold as equal)
+
+### Added
+* Offer conversion to string for all input keys so that, when using SMASH as library, setting `Configuration` key values does not require to implement specializations of the `YAML::convert` class template for key types not convertible to strings
+
+[Link to diff from previous version](https://github.com/smash-transport/smash/compare/SMASH-3.2.1...SMASH-3.2.2)
+
+
+## SMASH-3.2.1
+Date: 2025-07-08
+
+### Changed
+* Upgraded to Pythia 8.315, which contains a bug-fix (see [here](https://pythia.org/pdfdoc/aextra.pdf) for further information).
+  This hot-fix is meant to provide a SMASH version including the updated Pythia version.
+
+[Link to diff from previous version](https://github.com/smash-transport/smash/compare/SMASH-3.2...SMASH-3.2.1)
+
+
+## SMASH-3.2
+Date: 2025-02-25
+
+### Added
+* Strangeness production by resonances tuned to elementary production cross sections using a genetic algorithm
+* Added charmed particles with corresponding interactions (AQM for elastic scatterings and resonance production and decay for inelastic interactions)
+* Added alpha-clustered oxygen nuclei that can be configured in a new `Alpha_Clustered` section in the `Projectile`/`Target` section
+* Implemented dynamic initial conditions for hydrodynamics, available under `Modi: Collider: Initial_Conditions: Type: "Dynamic"`
+* Infrastructure for functional tests, which requires at least Python3.3, and first functional test
+
+### Input
+* Moved the `Orientation` section from the `Deformed` to the `Projectile`/`Target` section and changed the default value for `Theta` from `pi/2` to `0`
+* The `Include_Weak_And_EM_Decays_At_The_End` was renamed to `Ignore_Minimum_Decay_Width_For_Decays_At_The_End`
+
+### Output
+* Implemented a new `ASCII` value for the `Format` key of `Output: Particles` and `Output: Collisions`  which creates a *.dat* file containing columns based on a list of user-input `Quantities` (the existing `Oscar1999` and `Oscar2013` formats are simply a convenient alias for specifying `ASCII` and a predefined list of `Quantities`)
+* ⚠️ The ensemble number is now included in the output next to the event number - **this is a potentially breaking change for analysis software, especially if using the binary output**; refer to the documentation of each output type for further details
+* ⚠️ The former `Binary` format has been renamed to `Oscar2013_bin` and the `Binary` format now exists as a user-customizable output w.r.t. the output quantities (it works analogously to the `ASCII` format)
+* Bump binary output format version from 9 to 10
+* Some binary output files have been renamed to better track their content
+* Removed the information on the number of particles from the initial conditions output
+* Initial conditions, HepMC and Rivet outputs disabled when SMASH is run with multiple parallel ensembles
+
+### Changed
+* Upgraded to Pythia 8.312
+* The interface of the `Configuration` class has been totally changed making it use `Key` objects instead of low-level strings
+* The `List` modus now validates particles from all events at the very beginning and aborts if more than 2 particles are at the same identical position in any event
+
+### Fixed
+* Fix a small error and added a more precise documentation for the orientation section for deformed nuclei
+* Make few keys really mandatory in code as it was already stated in the documentation
+* Oscar2013 format for Initial Conditions no longer show the number of particles
+* Fix the number of each event in output files when using multiple parallel ensembles
+
+### Deprecated
+* Some physics-related input keys in `Output: Initial_Conditions` were deprecated and duplicated under `Modi: Collider: Initial_Conditions`
+
+### Removed
+* The deprecated `Version` key in the configuration file is not accepted anymore
+* The `Include_Weak_And_EM_Decays_At_The_End` key has been renamed and hence is not accepted anymore
+
+[Link to diff from previous version](https://github.com/smash-transport/smash/compare/SMASH-3.1...SMASH-3.2)
 
 
 ## SMASH-3.1
@@ -48,7 +156,6 @@ Date: 2024-02-26
 ### Changed
 * Use updated gold radius of 6.55 fm instead of 6.38 fm and a diffusiveness of 0.523 fm instead of 0.535 fm
 * Upgraded to Pythia 8.310
-* Upgraded to Cuba 4.2.2
 * SMASH installation procedure was improved and allows now to use SMASH as library relying on installation folder only
 * CMake module to find SMASH in an external project offers now a better approach based on the new installation procedure
 * Make `Clock` class comparison operators refer to internally represented time and not to `current_time()` return value
@@ -141,7 +248,7 @@ Date: 2022-05-10
 
 ### Added
 * Light nuclei (A=3) production via 4-to-2 reactions
-* Possibility to perform weak decays at the end of the calculation
+* Possibility to perform non-strong decays at the end of the calculation
 * Possibility to impose transverse momentum or rapidity cut when extracting initial conditions for hydrodynamics
 * Option to add a velocity field of the form `u_r = u_0 * r / R` in radial direction to the sphere mode
 * Interface functions to initialize SMASH conveniently (see new `library.h`)

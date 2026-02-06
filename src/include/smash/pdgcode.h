@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2024
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -36,8 +36,8 @@ namespace smash {
  *
  * \see http://pdg.lbl.gov/2014/reviews/rpp2014-rev-monte-carlo-numbering.pdf
  *
- * Usage:
- * ------
+ * <h2> Usage: </h2>
+ *
  * \code
  * #include "include/pdgcode.h"
  *
@@ -65,8 +65,7 @@ namespace smash {
  * This class contains a collection of smart accessors to the PDG code
  * so that quantum numbers etc can easily be read off.
  *
- * Internals
- * ---------
+ * <h2> Internals </h2>
  *
  * The content is stored in hexadecimal digits, i.e., the number '545'
  * is interpreted as '0x221', i.e., an eta-meson. To check if a given
@@ -80,8 +79,7 @@ namespace smash {
  * involved with successive divisions by 10 and taking the remainder
  * etc.).
  *
- * Representing nuclei
- * -------------------
+ * <h2> Representing nuclei </h2>
  *
  * Following PDG standard, nuclei are represented by codes ±10LZZZAAAI, where
  * L is number of Lambdas inside the nucleus, ZZZ is charge, AAA is mass
@@ -94,8 +92,7 @@ namespace smash {
  * interesting to study light nuclei production, considering them as single
  * pointlike hadrons. This justifies introduction of nuclear PDG codes here.
  *
- * Limitations:
- * ------------
+ * <h2> Limitations: </h2>
  *
  * The code is tuned to non-colored objects at the moment. That means
  * that colored objects (Diquarks and Quarks) are not easily useable
@@ -377,6 +374,16 @@ class PdgCode {
             !is_nucleus());
   }
 
+  /// \return true if this is a neutrino.
+  inline bool is_neutrino() const {
+    return (is_lepton() && digits_.n_J_ % 2 == 0);
+  }
+
+  /// \return whether this is a charmonia
+  inline bool is_charmonia() const {
+    return is_meson() && digits_.n_q2_ == 4 && digits_.n_q3_ == 4;
+  }
+
   /// \return the baryon number of the particle.
   inline int baryon_number() const {
     if (is_nucleus()) {
@@ -445,6 +452,13 @@ class PdgCode {
   /// \return whether this is a Sigma baryon
   inline bool is_Sigma() const {
     return is_hyperon() && digits_.n_q2_ != 3 && !is_Lambda();
+  }
+
+  /// \return whether this is a Sigma* with pdgcodes 3224, 3214, 3114
+  inline bool is_Sigmastar() const {
+    const auto abs_code = std::abs(code());
+    return (abs_code == pdg::Sigma_star_m || abs_code == pdg::Sigma_star_z ||
+            abs_code == pdg::Sigma_star_p);
   }
 
   /// \return whether this is a kaon (K+, K-, K0, Kbar0)
@@ -517,22 +531,76 @@ class PdgCode {
    * be positive definite.
    */
   inline double frac_strange() const {
-    /* The quarkonium state has 0 net strangeness
-     *  but there are actually 2 strange quarks out of 2 total */
-    if (is_hadron() && digits_.n_q3_ == 3 && digits_.n_q2_ == 3) {
-      return 1.;
-    } else {
-      // For all other cases, there isn't both a strange and anti-strange
-      if (is_baryon()) {
-        return std::abs(strangeness()) / 3.;
-      } else if (is_meson()) {
-        return std::abs(strangeness()) / 2.;
+    if (is_baryon()) {
+      return std::abs(strangeness()) / 3.;
+    } else if (is_meson()) {
+      /* The quarkonium state has 0 net strangeness
+       * but there are actually 2 strange quarks out of 2 total */
+      if (digits_.n_q3_ == 3 && digits_.n_q2_ == 3) {
+        return 1.;
       } else {
-        /* If not baryon or meson, this should be 0, as AQM does not
-         * extend to non-hadrons */
-        return 0.;
+        return std::abs(strangeness()) / 2.;
       }
+    } else {
+      /* If not baryon or meson, this should be 0, as AQM does not
+       * extend to non-hadrons */
+      return 0.;
     }
+  }
+
+  /**
+   * \return the fraction number of charm quarks
+   *         (charm + anti-charm) / total
+   *
+   * This is useful for the AQM cross-section scaling, and needs to
+   * be positive definite.
+   */
+  inline double frac_charm() const {
+    if (is_baryon()) {
+      return std::abs(charmness()) / 3.;
+    } else if (is_meson()) {
+      /* The charmonium state has 0 net charmness
+       * but there are actually 2 charm quarks out of 2 total */
+      if (digits_.n_q3_ == 4 && digits_.n_q2_ == 4) {
+        return 1.;
+      } else {
+        return std::abs(charmness()) / 2.;
+      }
+    } else {
+      /* If not baryon or meson, this should be 0, as AQM does not
+       * extend to non-hadrons */
+      return 0.;
+    }
+  }
+
+  /**
+   * \return the fraction number of bottom quarks
+   *         (bottom + anti-bottom) / total
+   *
+   * This is useful for the AQM cross-section scaling, and needs to
+   * be positive definite.
+   */
+  inline double frac_bottom() const {
+    if (is_baryon()) {
+      return std::abs(bottomness()) / 3.;
+    } else if (is_meson()) {
+      /* The bottomonium state has 0 net bottomness
+       * but there are actually 2 bottom quarks out of 2 total */
+      if (digits_.n_q3_ == 5 && digits_.n_q2_ == 5) {
+        return 1.;
+      } else {
+        return std::abs(bottomness()) / 2.;
+      }
+    } else {
+      /* If not baryon or meson, this should be 0, as AQM does not
+       * extend to non-hadrons */
+      return 0.;
+    }
+  }
+
+  /// \return whether the hadron contains a charm or bottom quark
+  inline bool is_heavy_flavor() const {
+    return (frac_charm() != 0) || (frac_bottom() != 0);
   }
 
   /**
@@ -1119,7 +1187,8 @@ inline bool is_dilepton(const PdgCode pdg1, const PdgCode pdg2) {
   const auto c2 = pdg2.code();
   const auto min = std::min(c1, c2);
   const auto max = std::max(c1, c2);
-  return (max == 0x11 && min == -0x11) || (max == 0x13 && min == -0x13);
+  return (max == 0x11 && min == -0x11) || (max == 0x13 && min == -0x13) ||
+         (max == 0x12 && min == -0x11) || (max == 0x11 && min == -0x12);
 }
 
 /**

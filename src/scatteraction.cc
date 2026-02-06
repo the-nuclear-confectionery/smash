@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -26,17 +26,21 @@ namespace smash {
 static constexpr int LScatterAction = LogArea::ScatterAction::id;
 
 ScatterAction::ScatterAction(const ParticleData &in_part_a,
-                             const ParticleData &in_part_b, double time,
-                             bool isotropic, double string_formation_time,
-                             double box_length, bool is_total_parametrized)
+                             const ParticleData &in_part_b, const double time,
+                             const bool isotropic,
+                             const double string_formation_time,
+                             const double box_length,
+                             const bool is_total_parametrized,
+                             const SpinInteractionType spin_interaction_type)
     : Action({in_part_a, in_part_b}, time),
       sum_of_partial_cross_sections_(0.),
       isotropic_(isotropic),
       string_formation_time_(string_formation_time),
-      is_total_parametrized_(is_total_parametrized) {
+      is_total_parametrized_(is_total_parametrized),
+      spin_interaction_type_(spin_interaction_type) {
   box_length_ = box_length;
   if (is_total_parametrized_) {
-    parametrized_total_cross_section_ = NAN;
+    parametrized_total_cross_section_ = smash_NaN<double>;
   }
 }
 
@@ -71,6 +75,7 @@ void ScatterAction::generate_final_state() {
     case ProcessType::Elastic:
       /* 2->2 elastic scattering */
       elastic_scattering();
+      spin_interaction();
       break;
     case ProcessType::TwoToOne:
       /* resonance formation */
@@ -80,6 +85,7 @@ void ScatterAction::generate_final_state() {
       /* 2->2 inelastic scattering */
       /* Sample the particle momenta in CM system. */
       inelastic_scattering();
+      spin_interaction();
       break;
     case ProcessType::TwoToThree:
     case ProcessType::TwoToFour:
@@ -94,6 +100,7 @@ void ScatterAction::generate_final_state() {
     case ProcessType::StringSoftNonDiffractive:
     case ProcessType::StringHard:
       string_excitation();
+      string_spin_interaction();
       break;
     default:
       throw InvalidScatterAction(
@@ -103,6 +110,9 @@ void ScatterAction::generate_final_state() {
           ", PDGcode2=" + incoming_particles_[1].pdgcode().string() + ")");
   }
 
+  const bool core_in_incoming =
+      std::any_of(incoming_particles_.begin(), incoming_particles_.end(),
+                  [](const ParticleData &p) { return p.is_core(); });
   for (ParticleData &new_particle : outgoing_particles_) {
     // Boost to the computational frame
     new_particle.boost_momentum(
@@ -110,6 +120,18 @@ void ScatterAction::generate_final_state() {
     /* Set positions of the outgoing particles */
     if (proc->get_type() != ProcessType::Elastic) {
       new_particle.set_4position(middle_point);
+      if (core_in_incoming) {
+        new_particle.fluidize();
+      }
+      if (new_particle.type().pdgcode().is_heavy_flavor()) {
+        // Particle weight is the product of incoming weights
+        const double perturbative_weight = std::accumulate(
+            incoming_particles_.begin(), incoming_particles_.end(), 1.0,
+            [](double w, const ParticleData &p) {
+              return w * p.perturbative_weight();
+            });
+        new_particle.set_perturbative_weight(perturbative_weight);
+      }
     }
   }
 }
@@ -139,13 +161,12 @@ void ScatterAction::add_all_scatterings(
    * of the string processes are counted by taking the difference between the
    * parametrized total and the sum of the non-strings. */
   if (!finder_parameters.strings_with_probability &&
-      xs.string_probability(finder_parameters)) {
+      xs.string_probability(finder_parameters) > 0) {
     const double xs_diff =
-        xs.high_energy(finder_parameters.transition_high_energy) -
-        sum_of_partial_cross_sections_;
+        xs.high_energy(finder_parameters) - sum_of_partial_cross_sections_;
     if (xs_diff > 0.) {
-      add_collisions(xs.string_excitation(xs_diff, string_process_,
-                                          finder_parameters.use_AQM));
+      add_collisions(
+          xs.string_excitation(xs_diff, string_process_, finder_parameters));
     }
   }
 
@@ -153,10 +174,9 @@ void ScatterAction::add_all_scatterings(
       try_find_pseudoresonance(finder_parameters.pseudoresonance_method,
                                finder_parameters.transition_high_energy);
   if (pseudoresonance && finder_parameters.two_to_one) {
-    const double xs_total =
-        is_total_parametrized_
-            ? *parametrized_total_cross_section_
-            : xs.high_energy(finder_parameters.transition_high_energy);
+    const double xs_total = is_total_parametrized_
+                                ? *parametrized_total_cross_section_
+                                : xs.high_energy(finder_parameters);
     const double xs_gap = xs_total - sum_of_partial_cross_sections_;
     // The pseudo-resonance is only created if there is a (positive) cross
     // section gap
@@ -186,14 +206,24 @@ void ScatterAction::rescale_outgoing_branches() {
         "This function can only be called after having added processes.");
   }
   if (sum_of_partial_cross_sections_ < really_small) {
-    logg[LScatterAction].warn() << "Current total cross section is roughly "
-                                   "zero and no rescaling to match "
-                                   "the parametrized one will be done.\nAn "
-                                   "elastic process will be added,"
-                                   "instead, to match the total cross section.";
+    const ParticleTypePtr type_a = &incoming_particles_[0].type();
+    const ParticleTypePtr type_b = &incoming_particles_[1].type();
+    // This is a std::set instead of std::pair because the order of particles
+    // does not matter here
+    const std::set<ParticleTypePtr> pair{type_a, type_b};
+    if (!warned_no_rescaling_available.count(pair)) {
+      logg[LScatterAction].warn()
+          << "Total cross section between " << type_a->name() << " and "
+          << type_b->name() << "is roughly zero at sqrt(s) = " << sqrt_s()
+          << " GeV, and no rescaling to match the parametrized value will be "
+             "done.\nAn elastic process will be added, instead, to match the "
+             "total cross section.\nFor this pair of particles, this warning "
+             "will be subsequently suppressed.";
+      warned_no_rescaling_available.insert(pair);
+    }
     auto elastic_branch = std::make_unique<CollisionBranch>(
-        incoming_particles_[0].type(), incoming_particles_[1].type(),
-        *parametrized_total_cross_section_, ProcessType::Elastic);
+        *type_a, *type_b, *parametrized_total_cross_section_,
+        ProcessType::Elastic);
     add_collision(std::move(elastic_branch));
   } else {
     const double reweight =
@@ -600,11 +630,17 @@ void ScatterAction::inelastic_scattering() {
   // create new particles
   sample_2body_phasespace();
   assign_formation_time_to_outgoing_particles();
+  if (spin_interaction_type_ != SpinInteractionType::Off) {
+    assign_unpolarized_spin_vector_to_outgoing_particles();
+  }
 }
 
 void ScatterAction::two_to_many_scattering() {
   sample_manybody_phasespace();
   assign_formation_time_to_outgoing_particles();
+  if (spin_interaction_type_ != SpinInteractionType::Off) {
+    assign_unpolarized_spin_vector_to_outgoing_particles();
+  }
   logg[LScatterAction].debug("2->", outgoing_particles_.size(),
                              " scattering:", incoming_particles_, " -> ",
                              outgoing_particles_);
@@ -624,6 +660,9 @@ void ScatterAction::resonance_formation() {
   outgoing_particles_[0].set_4momentum(
       total_momentum_of_outgoing_particles().abs(), 0., 0., 0.);
   assign_formation_time_to_outgoing_particles();
+  if (spin_interaction_type_ != SpinInteractionType::Off) {
+    assign_unpolarized_spin_vector_to_outgoing_particles();
+  }
   /* this momentum is evaluated in the computational frame. */
   logg[LScatterAction].debug("Momentum of the new particle: ",
                              outgoing_particles_[0].momentum());
@@ -738,6 +777,124 @@ void ScatterAction::string_excitation() {
       }
     } else {
       create_string_final_state();
+    }
+  }
+}
+
+static void boost_spin_vectors_after_elastic_scattering(
+    ParticleData &outgoing_particle_a, ParticleData &outgoing_particle_b) {
+  // Boost spin vectors
+  outgoing_particle_a.set_spin_vector(
+      outgoing_particle_a.spin_vector().lorentz_boost(
+          outgoing_particle_a.velocity()));
+  outgoing_particle_b.set_spin_vector(
+      outgoing_particle_b.spin_vector().lorentz_boost(
+          outgoing_particle_b.velocity()));
+}
+
+void ScatterAction::spin_interaction() {
+  if (spin_interaction_type_ != SpinInteractionType::Off) {
+    /* 2->2 elastic scattering */
+    if (process_type_ == ProcessType::Elastic) {
+      // Final boost to the outgoing particle momenta
+      boost_spin_vectors_after_elastic_scattering(outgoing_particles_[0],
+                                                  outgoing_particles_[1]);
+    }
+
+    /* 2->1 resonance formation */
+    if (process_type_ == ProcessType::TwoToOne) {
+      /*
+       * @brief Λ+π → Σ* resonance formation with Λ–spin bookkeeping.
+       *
+       * We do not simulate a direct inelastic Λ+π scattering; instead we form a
+       * Σ* resonance and let it decay later. To preserve Λ polarization per
+       * arXiv:2404.15890v2, we treat the Σ* spin vector as a proxy for the
+       * would-be outgoing Λ spin: at formation, we set the Σ* spin to the
+       * incoming Λ spin and apply a possible spin flip according to the
+       * Λ–flip/non-flip fractions extracted from the paper. On Σ* → Λ+π decay,
+       * the Σ* spin vector is copied to the Λ, thus transporting Λ polarization
+       * through the resonance stage.
+       */
+      // Identify if the outgoing resonance is a Σ*
+      if (outgoing_particles_[0].is_sigmastar()) {
+        // Check that one of the incoming particles is a Λ and the other a π
+        const bool has_lambda = incoming_particles_[0].pdgcode().is_Lambda() ||
+                                incoming_particles_[1].pdgcode().is_Lambda();
+        const bool has_pion = incoming_particles_[0].is_pion() ||
+                              incoming_particles_[1].is_pion();
+        if (has_lambda && has_pion) {
+          auto &lambda = (incoming_particles_[0].pdgcode().is_Lambda())
+                             ? incoming_particles_[0]
+                             : incoming_particles_[1];
+          auto &sigma_star = outgoing_particles_[0];
+
+          // Perform spin flip with probability of 2/9
+          int random_int = random::uniform_int(1, 9);
+          FourVector final_spin_vector = lambda.spin_vector();
+
+          if (random_int <= 7) {
+            // No spin flip
+            final_spin_vector = final_spin_vector.lorentz_boost(
+                outgoing_particles_[0].velocity());
+            outgoing_particles_[0].set_spin_vector(final_spin_vector);
+          } else {
+            // Spin flip in Lambda rest frame
+            ThreeVector lambda_velocity = lambda.velocity();
+            final_spin_vector =
+                final_spin_vector.lorentz_boost(lambda_velocity);
+
+            // Flip the spatial spin vector components
+            final_spin_vector[1] = -final_spin_vector[1];
+            final_spin_vector[2] = -final_spin_vector[2];
+            final_spin_vector[3] = -final_spin_vector[3];
+
+            // Boost back to computational frame and to Sigma* frame
+            final_spin_vector =
+                final_spin_vector.lorentz_boost(-lambda_velocity);
+            final_spin_vector =
+                final_spin_vector.lorentz_boost(sigma_star.velocity());
+            sigma_star.set_spin_vector(final_spin_vector);
+          }
+        }
+      }
+    }
+  }
+}
+
+void ScatterAction::string_spin_interaction() {
+  // Check if spin interaction is disabled
+  if (spin_interaction_type_ == SpinInteractionType::Off) {
+    return;
+  }
+  const bool is_AB_to_AX =
+      (process_type_ == ProcessType::StringSoftSingleDiffractiveAX);
+  const bool is_AB_to_XB =
+      (process_type_ == ProcessType::StringSoftSingleDiffractiveXB);
+
+  /* This logic relies on the assumption that the surviving hadron is
+   * always appended as the final element in the outgoing particle list.
+   * This ordering is guaranteed by StringProcess::next_SDiff(bool
+   * is_AB_to_AX). If that implementation changes, the behavior here must
+   * be re-evaluated. */
+  if (is_AB_to_AX || is_AB_to_XB) {
+    const std::size_t idx_hadron_in = is_AB_to_AX ? 0 : 1;
+
+    // Boost spin vector of surviving hadron to outgoing frame
+    const FourVector final_spin_vector =
+        incoming_particles_[idx_hadron_in].spin_vector().lorentz_boost(
+            outgoing_particles_.back().velocity());
+
+    outgoing_particles_.back().set_spin_vector(final_spin_vector);
+
+    /* Set unpolarized spin vector for all newly created particles (all but
+     * the last one) */
+    for (auto it = outgoing_particles_.begin();
+         it != outgoing_particles_.end() - 1; ++it) {
+      it->set_unpolarized_spin_vector();
+    }
+  } else {
+    for (auto &particle : outgoing_particles_) {
+      particle.set_unpolarized_spin_vector();
     }
   }
 }

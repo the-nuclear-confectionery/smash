@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2020,2022-2023
+ *    Copyright (c) 2014-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "logging.h"
+#include "numeric_cast.h"
 
 namespace smash {
 
@@ -45,7 +46,7 @@ static constexpr int LClock = LogArea::Clock::id;
  *    suited for output. Ticking this clock means to consider the following
  *    point in time. Ticking beyond the last time point is considered an error.
  *
- * ### Potential usage for adapting time steps:
+ * <h3> Potential usage for adapting time steps: </h3>
  *
  * \code
  *   const double end_time = 10.;
@@ -64,7 +65,7 @@ static constexpr int LClock = LogArea::Clock::id;
  *   }
  * \endcode
  *
- * ### Possible actions for Clock
+ * <h3> Possible actions for Clock </h3>
  *
  * \li look at it and find out the current time
  * \see current_time()
@@ -94,7 +95,7 @@ class Clock {
   /// \return the time of the next time step
   virtual double next_time() const = 0;
   /**
-   * reset the clock to the starting time of the simulation
+   * Reset the clock to the starting time of the simulation
    *
    * \param[in] start_time starting time of the simulation
    * \param[in] is_output_clock whether this is an output clock rather than a
@@ -187,7 +188,7 @@ class Clock {
 
 /** Clock with uniformly spaced time steps
  *
- * ### Internal clock mechanisms
+ * <h3> Internal clock mechanisms </h3>
  *
  * This clock stores a time step size \f$\Delta t\f$, a base time \f$t_0\f$ as
  * well as an end time \f$t_{end}\f$ and a counter \f$n\f$. The current time is
@@ -387,7 +388,7 @@ class UniformClock : public Clock {
 
   /// Convert a double \p x into the internal int representation.
   static Representation convert(double x) {
-    return std::round(x * from_double);
+    return numeric_cast<Representation>(std::round(x * from_double));
   }
   /// Convert an internal int value \p x into the double representation.
   static double convert(Representation x) { return x * to_double; }
@@ -412,25 +413,43 @@ class CustomClock : public Clock {
     std::sort(custom_times_.begin(), custom_times_.end());
     counter_ = -1;
   }
+
   /**
-   * \copydoc Clock::current_time
-   * \throw runtime_error if the clock has never been advanced
+   * \return The start time if the clock has never been ticked or the current
+   *         time otherwise.
+   * \throw std::out_of_range if the clock has ticked beyond the last time.
+   * \throw std::runtime_error if the clock has an internal broken state.
    */
   double current_time() const override {
     if (counter_ == -1) {
       // current time before the first output should be the starting time
       return start_time_;
     } else if (counter_ < -1) {
-      throw std::runtime_error("Trying to access undefined zeroth output time");
+      throw std::runtime_error(
+          "Trying to access time of clock in invalid state.");
     } else {
-      return custom_times_[counter_];
+      return custom_times_.at(counter_);
     }
   }
-  /// \copydoc Clock::next_time
-  double next_time() const override { return custom_times_[counter_ + 1]; }
+
+  /**
+   * \return The next custom time.
+   * \throw std::out_of_range if the clock has ticked beyond last time.
+   */
+  double next_time() const override { return custom_times_.at(counter_ + 1); }
+
+  /// \copydoc Clock::timestep_duration
   double timestep_duration() const override {
     return next_time() - current_time();
   }
+
+  /**
+   * Reset the clock to the starting time of the simulation.
+   *
+   * \param[in] start_time starting time of the simulation
+   *
+   * \note The second \c bool parameter is irrelevant and unused here.
+   */
   void reset(double start_time, bool) override {
     counter_ = -1;
     start_time_ = start_time;
@@ -442,17 +461,27 @@ class CustomClock : public Clock {
    * \param[in] start_time starting time of the simulation
    */
   void remove_times_in_past(double start_time) override {
-    std::remove_if(custom_times_.begin(), custom_times_.end(),
-                   [start_time](double t) {
-                     if (t <= start_time) {
-                       logg[LClock].warn("Removing custom output time ", t,
-                                         " fm since it is earlier than the "
-                                         "starting time of the simulation");
-                       return true;
-                     } else {
-                       return false;
-                     }
-                   });
+    custom_times_.erase(
+        std::remove_if(
+            custom_times_.begin(), custom_times_.end(),
+            [start_time](double t) {
+              if (t < start_time) {
+                logg[LClock].warn("Removing custom output time ", t,
+                                  " fm since it is earlier than the "
+                                  "starting time of the simulation");
+                return true;
+              } else if (t == start_time) {
+                logg[LClock].debug(
+                    "The start time ", t,
+                    " fm has to be removed from the 'custom_times_' vector "
+                    "since it will be otherwise considered twice in the actual "
+                    "output time steps");
+                return true;
+              } else {
+                return false;
+              }
+            }),
+        custom_times_.end());
   }
 
  protected:

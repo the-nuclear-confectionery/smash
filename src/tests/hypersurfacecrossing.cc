@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2019-2020,2022
+ *    Copyright (c) 2019-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -11,7 +11,8 @@
 
 #include "setup.h"
 #include "smash/experiment.h"
-#include "smash/hypersurfacecrossingaction.h"
+#include "smash/fluidizationaction.h"
+#include "smash/hypersurfacecrossingfinder.h"
 
 using namespace smash;
 using smash::Test::Momentum;
@@ -44,6 +45,7 @@ TEST(hypersurface_crossing_action) {
   // create finder at tau = 0.5fm without rapidity or pT cut
   double proper_time = 0.5;
   HyperSurfaceCrossActionsFinder finder(proper_time, 0.0, 0.0);
+  FluidizationAction::remove_particle_ = true;
 
   // no grid means no grid cell volume
   const double grid_cell_vol = 0.0;
@@ -79,8 +81,8 @@ TEST(hypersurface_crossing_action) {
     // Perform action
     action->generate_final_state();
     action->perform(&particles, id_process);
-
-    COMPARE(action->get_type(), ProcessType::HyperSurfaceCrossing);
+    std::cout << action->get_type() << " " << ProcessType::Fluidization;
+    COMPARE(action->get_type(), ProcessType::Fluidization);
     // 1 incoming, no outgoing particles expected (particle removed)
     COMPARE(action->incoming_particles().size(), 1u);
     COMPARE(action->outgoing_particles().size(), 0u);

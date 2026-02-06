@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2015-2023
+ *    Copyright (c) 2015-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -484,6 +484,35 @@ TEST(particle_ordering) {
   }
 }
 
+TEST(perturbative_weight_propagated_collision) {
+  const double weight = 0.5;
+  // put particles in list
+  Particles particles;
+  ParticleData heavy{ParticleType::find(0x411)};  // D+
+  heavy.set_4position(pos_a);
+  heavy.set_4momentum(Momentum{2.6, 1.0, 0., 0.});
+  heavy.set_perturbative_weight(weight);
+
+  ParticleData light{ParticleType::find(-0x211)};  // pi-
+  light.set_4position(pos_b);
+  light.set_4momentum(Momentum{1.1, -1.0, 0., 0.});
+
+  heavy = particles.insert(heavy);
+  light = particles.insert(light);
+
+  // create action
+  constexpr double time = 0.2;
+  ScatterAction act(heavy, light, time);
+  act.add_all_scatterings(Test::default_finder_parameters());
+
+  const ParticleList& out = act.outgoing_particles();
+  for (const ParticleData& p : out) {
+    if (p.type().pdgcode().is_heavy_flavor()) {
+      COMPARE(p.perturbative_weight(), weight);
+    }
+  }
+}
+
 TEST_CATCH(set_parametrized_total_bottomup, std::logic_error) {
   ParticleData particle{ParticleType::find(0x111)};  // pi0
   ScatterActionPtr act_bottomup = std::make_unique<ScatterAction>(
@@ -520,6 +549,7 @@ TEST(top_down_sum_matches_parametrization) {
     double p_x = random::uniform(0., 0.5);
     p1.set_4momentum(p1.pole_mass(), p_x, 0., 0.);
     p2.set_4momentum(p2.pole_mass(), -p_x, 0., 0.);
+    std::cout << "Testing following pair:\n" << p1 << "\n" << p2 << std::endl;
 
     ScatterActionPtr act_topdown =
         std::make_unique<ScatterAction>(p1, p2, 0.1, false, 1.0, -1.0, true);

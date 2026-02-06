@@ -22,6 +22,7 @@ smash.cc, Experiment::run() and the functions library.h.
 #include "smash/config.h"
 #include "smash/experiment.h"
 #include "smash/forwarddeclarations.h"
+#include "smash/input_keys.h"
 #include "smash/library.h"
 
 int main() {
@@ -47,19 +48,22 @@ int main() {
                                                   decaymodes_file);
 
     // 2) Do additional configurations e.g. set a custom end time by
-    float new_end_time = 180.0;
-    config.set_value({"General", "End_Time"}, new_end_time);
+    double new_end_time = 180.0;
+    config.set_value(smash::InputKeys::gen_endTime, new_end_time);
     // ...
 
     std::string smash_version = SMASH_VERSION;
 
-    // 3) Initialize decay modes, particle types, tabulations
-    smash::initialize_particles_decays_and_tabulations(config, smash_version,
-                                                       tabulations_path);
+    // 3) Initialize decay modes, particle types
+    const auto hash = smash::initialize_particles_decays_and_return_hash(
+        config, smash_version);
 
     // Create experiment
     auto experiment =
         smash::Experiment<smash::ColliderModus>(config, output_path);
+
+    // Tabulate integrals
+    smash::tabulate_resonance_integrals(hash, tabulations_path);
 
     ////////////////////////////////////////////////////////////////////////////
     // Run the experiment in a special way here, mimicking new JETSCAPE features
@@ -83,7 +87,7 @@ int main() {
     } while (current_time < new_end_time);
 
     std::cout << "Last time: " << current_time << '\n';
-    experiment.do_final_decays();
+    experiment.do_final_interactions();
     experiment.final_output();
 
   } catch (std::exception &e) {

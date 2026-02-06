@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2023
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -61,6 +61,23 @@ struct EventInfo {
 /**
  * \ingroup output
  *
+ * \brief Structure to contain information about the event and ensemble numbers
+ *
+ * \anchor event_label
+ * This structure is intended to hold and conveniently pass information to
+ * create a unique label for each block of output about a given ensemble of a
+ * given event.
+ */
+struct EventLabel {
+  /// The number of the event
+  int32_t event_number;
+  /// The number of the ensemble
+  int32_t ensemble_number;
+};
+
+/**
+ * \ingroup output
+ *
  * \brief Abstraction of generic output
  *
  * Any output should inherit this class. It provides virtual methods that will
@@ -84,6 +101,12 @@ struct EventInfo {
  * as irrelevant for the empty implementation. However, every child class which
  * overrides some methods documents them in detail. Refer to them for further
  * information.
+ *
+ * \attention Some methods take an \c EventLabel parameter and some just an
+ * integer. The former contains both the number of event and the number of
+ * ensemble while the latter is meant to be the number of the event, only.
+ * Passing the number of event only is meant to emphasise that the method will
+ * combine input from different ensembles, when multiple are used.
  */
 class OutputInterface {
  public:
@@ -94,7 +117,7 @@ class OutputInterface {
   explicit OutputInterface(std::string name)
       : is_dilepton_output_(name == "Dileptons"),
         is_photon_output_(name == "Photons"),
-        is_IC_output_(name == "SMASH_IC") {}
+        is_IC_output_(name.substr(0, 8) == "SMASH_IC") {}
   /**
    * Pure virtual destructor to make class abstract and prevent its
    * instantiation. It needs a definition which is done outside the class.
@@ -105,7 +128,8 @@ class OutputInterface {
    * Output launched at event start after initialization, when particles are
    * generated but not yet propagated.
    */
-  virtual void at_eventstart(const Particles &, const int, const EventInfo &) {}
+  virtual void at_eventstart(const Particles &, const EventLabel &,
+                             const EventInfo &) {}
 
   /**
    * Output launched at event start after initialization, when particles are
@@ -133,20 +157,14 @@ class OutputInterface {
    * Output launched at event end. Event end is determined by maximal time-step
    * option.
    */
-  virtual void at_eventend(const int, const ThermodynamicQuantity,
-                           const DensityType) {}
-
-  /**
-   * Output launched at event end. Event end is determined by maximal time-step
-   * option.
-   */
   virtual void at_eventend(const ThermodynamicQuantity) {}
 
   /**
    * Output launched at event end. Event end is determined by maximal time-step
    * option.
    */
-  virtual void at_eventend(const Particles &, const int, const EventInfo &) {}
+  virtual void at_eventend(const Particles &, const EventLabel &,
+                           const EventInfo &) {}
   /**
    * Output launched at event end. Event end is determined by maximal time-step
    * option.
@@ -164,7 +182,7 @@ class OutputInterface {
   virtual void at_intermediate_time(const Particles &,
                                     const std::unique_ptr<Clock> &,
                                     const DensityParameters &,
-                                    const EventInfo &) {}
+                                    const EventLabel &, const EventInfo &) {}
   /**
    * Output launched after every N'th timestep. N is controlled by an option.
    */

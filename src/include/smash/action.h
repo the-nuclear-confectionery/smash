@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2024
+ *    Copyright (c) 2014-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -350,6 +350,15 @@ class Action {
       double sqrts, const std::vector<double> &m,
       std::vector<FourVector> &sampled_momenta);
 
+  /**
+   * Assign an unpolarized spin vector to all outgoing particles.
+   *
+   * \attention Make sure to assign the spin vectors after the boosted
+   * 4-momentum of the outgoing particles has been set, as the function includes
+   * a boost to the lab frame.
+   */
+  void assign_unpolarized_spin_vector_to_outgoing_particles();
+
  protected:
   /// List with data of incoming particles.
   ParticleList incoming_particles_;
@@ -420,9 +429,8 @@ class Action {
     /* Should never get here. */
     logg[LAction].fatal(SMASH_SOURCE_LOCATION,
                         "Problem in choose_channel: ", subprocesses.size(), " ",
-                        weight_sum, " ", total_weight, " ",
-                        //          random_weight, "\n", *this);
-                        random_weight, "\n");
+                        weight_sum, " ", total_weight, " ", random_weight, "\n",
+                        *this);
     std::abort();
   }
 
@@ -455,7 +463,7 @@ class Action {
    * Sample the full 2-body phase-space (masses, momenta, angles)
    * in the center-of-mass frame for the final state particles.
    */
-  void sample_2body_phasespace();
+  virtual void sample_2body_phasespace();
 
   /**
    * Sample the full n-body phase-space (masses, momenta, angles)

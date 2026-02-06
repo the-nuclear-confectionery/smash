@@ -1,5 +1,5 @@
 /*
- *    Copyright (c) 2014-2022
+ *    Copyright (c) 2014-2022,2024-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -13,14 +13,16 @@
 #include "smash/configuration.h"
 #include "smash/constants.h"
 #include "smash/fourvector.h"
+#include "smash/input_keys.h"
 #include "smash/random.h"
 #include "smash/threevector.h"
 
 namespace smash {
 
 DeformedNucleus::DeformedNucleus(const std::map<PdgCode, int> &particle_list,
-                                 int nTest)
-    : Nucleus(particle_list, nTest) {}
+                                 int nTest,
+                                 SpinInteractionType spin_interaction_type)
+    : Nucleus(particle_list, nTest, spin_interaction_type) {}
 
 DeformedNucleus::DeformedNucleus(Configuration &config, int nTest,
                                  bool auto_deformation)
@@ -31,10 +33,19 @@ DeformedNucleus::DeformedNucleus(Configuration &config, int nTest,
   } else {
     set_deformation_parameters_from_config(config);
   }
-  if (config.has_value({"Deformed", "Orientation"})) {
-    Configuration sub_conf =
-        config.extract_sub_configuration({"Deformed", "Orientation"});
-    set_orientation_from_config(sub_conf);
+  /* If the config does not contain (anymore) a target or a projectile
+  sub-section, this code should not be executed, because e.g. the
+  is_about_projectile function would fail. */
+  if (has_projectile_or_target(config)) {
+    const auto &orientation_section = [&config]() {
+      return is_about_projectile(config) ? InputSections::m_c_p_orientation
+                                         : InputSections::m_c_t_orientation;
+    }();
+    if (config.has_section(orientation_section)) {
+      Configuration sub_conf =
+          config.extract_complete_sub_configuration(orientation_section);
+      set_orientation_from_config(sub_conf);
+    }
   }
 }
 
@@ -157,85 +168,35 @@ void DeformedNucleus::set_deformation_parameters_automatic() {
 
 void DeformedNucleus::set_deformation_parameters_from_config(
     Configuration &config) {
-  // Deformation parameters.
-  if (config.has_value({"Deformed", "Beta_2"})) {
-    set_beta_2(static_cast<double>(config.take({"Deformed", "Beta_2"})));
-  }
-  if (config.has_value({"Deformed", "Gamma"})) {
-    set_gamma(static_cast<double>(config.take({"Deformed", "Gamma"})));
-  }
-  if (config.has_value({"Deformed", "Beta_3"})) {
-    set_beta_3(static_cast<double>(config.take({"Deformed", "Beta_3"})));
-  }
-  if (config.has_value({"Deformed", "Beta_4"})) {
-    set_beta_4(static_cast<double>(config.take({"Deformed", "Beta_4"})));
-  }
-}
-
-void DeformedNucleus::set_orientation_from_config(
-    Configuration &orientation_config) {
-  // Read in orientation if provided, otherwise, the defaults are
-  // theta = pi/2, phi = 0, as declared in the angles class
-
-  if (orientation_config.has_value({"Theta"})) {
-    if (orientation_config.has_value({"Random_Rotation"}) &&
-        orientation_config.take({"Random_Rotation"})) {
-      throw std::domain_error(
-          "Random rotation of nuclei is activated although"
-          " theta is provided. Please specify only either of them. ");
-    } else {
-      set_polar_angle(static_cast<double>(orientation_config.take({"Theta"})));
+  if (has_projectile_or_target(config)) {
+    const bool is_projectile = is_about_projectile(config);
+    const auto &[beta2_key, beta3_key, beta4_key,
+                 gamma_key] = [&is_projectile]() {
+      return is_projectile
+                 ? std::make_tuple(
+                       InputKeys::modi_collider_projectile_deformed_beta2,
+                       InputKeys::modi_collider_projectile_deformed_beta3,
+                       InputKeys::modi_collider_projectile_deformed_beta4,
+                       InputKeys::modi_collider_projectile_deformed_gamma)
+                 : std::make_tuple(
+                       InputKeys::modi_collider_target_deformed_beta2,
+                       InputKeys::modi_collider_target_deformed_beta3,
+                       InputKeys::modi_collider_target_deformed_beta4,
+                       InputKeys::modi_collider_target_deformed_gamma);
+    }();
+    // Deformation parameters
+    if (config.has_value(beta2_key)) {
+      beta2_ = config.take(beta2_key);
     }
-  }
-
-  if (orientation_config.has_value({"Phi"})) {
-    if (orientation_config.has_value({"Random_Rotation"}) &&
-        orientation_config.take({"Random_Rotation"})) {
-      throw std::domain_error(
-          "Random rotation of nuclei is activated although"
-          " phi is provided. Please specify only either of them. ");
-    } else {
-      set_azimuthal_angle(
-          static_cast<double>(orientation_config.take({"Phi"})));
+    if (config.has_value(gamma_key)) {
+      gamma_ = config.take(gamma_key);
     }
-  }
-
-  if (orientation_config.has_value({"Psi"})) {
-    if (orientation_config.has_value({"Random_Rotation"}) &&
-        orientation_config.take({"Random_Rotation"})) {
-      throw std::domain_error(
-          "Random rotation of nuclei is activated although"
-          " psi is provided. Please specify only either of them. ");
-    } else {
-      set_angle_psi(static_cast<double>(orientation_config.take({"Psi"})));
+    if (config.has_value(beta3_key)) {
+      beta3_ = config.take(beta3_key);
     }
-  }
-
-  if (orientation_config.take({"Random_Rotation"}, false)) {
-    random_rotation_ = true;
-  }
-}
-
-void DeformedNucleus::rotate() {
-  if (random_rotation_) {
-    // Randomly generate euler angles for theta and phi. Psi needs not be
-    // assigned, as the nucleus objects are symmetric with respect to psi.
-    Nucleus::random_euler_angles();
-    set_azimuthal_angle(euler_phi_);
-    set_polar_angle(euler_theta_);
-    set_angle_psi(euler_psi_);
-  }
-  for (auto &particle : *this) {
-    /* Rotate every vector by the nuclear azimuth phi, polar angle
-     * theta and psi (the Euler angles). This means applying the matrix for a
-     * rotation of phi about z, followed by the matrix for a rotation
-     * theta about the rotated x axis. If the triaxiality coefficient is not
-     * zero, one has to include the third rotation around psi as the nucleus is
-     * not symmetric under rotation of any axis.*/
-    ThreeVector three_pos = particle.position().threevec();
-    three_pos.rotate(nuclear_orientation_.phi(), nuclear_orientation_.theta(),
-                     nuclear_orientation_.psi());
-    particle.set_3position(three_pos);
+    if (config.has_value(beta4_key)) {
+      beta4_ = config.take(beta4_key);
+    }
   }
 }
 

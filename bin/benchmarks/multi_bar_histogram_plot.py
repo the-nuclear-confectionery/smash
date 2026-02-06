@@ -1,13 +1,16 @@
-#===================================================
+#!/usr/bin/env python3
+
+# ===================================================
 #
-#    Copyright (c) 2024
+#    Copyright (c) 2024-2025
 #      SMASH Team
 #
 #    GNU General Public License (GPLv3 or later)
 #
-#===================================================
+# ===================================================
 
 import matplotlib.pyplot as plt
+
 
 def make_multi_bar_histogram_plot(data, colors=None, total_width=0.8,
                                   single_width=1, legend=True,
@@ -100,18 +103,20 @@ def make_multi_bar_histogram_plot(data, colors=None, total_width=0.8,
             if annotate == True:
                 bars_to_annotate = [i for i, _ in enumerate(data.keys())]
             elif annotate == False:
-                bars_to_annotate=[]
+                bars_to_annotate = []
             else:
                 bars_to_annotate = annotate
             if i in bars_to_annotate and i > 0:
                 previous_bar_height = list(data.values())[i-1][x][0]
                 if y != 0:
                     delta = (y-previous_bar_height)/y*100
-                    plt.annotate(f'{delta:.1f}%', xy=(x + x_offset, y+dy),
-                                xytext=(0, 5), textcoords='offset points',
-                                ha='center', va='bottom', rotation=90,
-                                color = 'red' if delta>0 else 'green',
-                                fontsize='small', fontweight='bold')
+                    extra_x_offset = i * bar_width * (1 - single_width) / 2
+                    plt.annotate(f'{delta:.1f}%',
+                                 xy=(x + x_offset + extra_x_offset, y+dy),
+                                 xytext=(0, 5), textcoords='offset points',
+                                 ha='center', va='bottom', rotation=90,
+                                 color='red' if delta > 0 else 'green',
+                                 fontsize='x-small', fontweight='bold')
 
         # Add a handle to the last drawn bar, which we'll need for the legend
         bars.append(bar[0])
@@ -135,19 +140,20 @@ def make_multi_bar_histogram_plot(data, colors=None, total_width=0.8,
         ax.margins(y=ymargin)
 
     # Show the plot
-    plt.tight_layout() # prevent x-ticks and/or axis labels to be cut
+    plt.tight_layout()  # prevent x-ticks and/or axis labels to be cut
     plt.show()
 
 
 if __name__ == "__main__":
     # Usage example:
     data = {
-        "a": [(1,1), (2,1), (3,1), (2,1), (1,1)],
-        "b": [(2,1), (3,1), (4,1), (3,1), (1,1)],
-        "c": [(3,1), (2,1), (1,1), (4,1), (2,1)]
+        "a": [(1, 1), (2, 1), (3, 1), (2, 1), (1, 1)],
+        "b": [(2, 1), (3, 1), (4, 1), (3, 1), (1, 1)],
+        "c": [(3, 1), (2, 1), (1, 1), (4, 1), (2, 1)]
     }
 
     make_multi_bar_histogram_plot(data, total_width=.8, single_width=.95,
-                                  xticks=["one", "two", "three", "four", "five"],
+                                  xticks=["one", "two",
+                                          "three", "four", "five"],
                                   ylabel="Magic number", ymargin=0.2,
                                   annotate=True)

@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2014-2020,2022-2023
+ *    Copyright (c) 2014-2020,2022-2025
  *      SMASH Team
  *
  *    GNU General Public License (GPLv3 or later)
@@ -65,7 +65,8 @@ ActionList DecayActionsFinder::find_actions_in_cell(
     if (decay_time < dt) {
       /* => decay_time ∈ [0, dt[
        * => the particle decays in this timestep. */
-      auto act = std::make_unique<DecayAction>(p, decay_time);
+      auto act =
+          std::make_unique<DecayAction>(p, decay_time, spin_interaction_type_);
       act->add_decays(std::move(processes));
       actions.emplace_back(std::move(act));
     }
@@ -73,23 +74,24 @@ ActionList DecayActionsFinder::find_actions_in_cell(
   return actions;
 }
 
-ActionList DecayActionsFinder::find_final_actions(const Particles &search_list,
-                                                  bool /*only_res*/) const {
+ActionList DecayActionsFinder::find_final_actions(
+    const Particles &search_list) const {
   ActionList actions;
+  if (find_final_decays_) {
+    for (const auto &p : search_list) {
+      if (!do_final_non_strong_decays_ && p.type().is_stable()) {
+        continue;  // particle is stable with respect to strong interaction
+      }
 
-  for (const auto &p : search_list) {
-    if (!do_final_weak_decays_ && p.type().is_stable()) {
-      continue;  // particle is stable with respect to strong interaction
+      if (p.type().decay_modes().is_empty()) {
+        continue;  // particle cannot decay (not even e.m. or weakly)
+      }
+
+      auto act = std::make_unique<DecayAction>(p, 0., spin_interaction_type_);
+      act->add_decays(p.type().get_partial_widths(
+          p.momentum(), p.position().threevec(), WhichDecaymodes::All));
+      actions.emplace_back(std::move(act));
     }
-
-    if (p.type().decay_modes().is_empty()) {
-      continue;  // particle cannot decay (not even e.m. or weakly)
-    }
-
-    auto act = std::make_unique<DecayAction>(p, 0.);
-    act->add_decays(p.type().get_partial_widths(
-        p.momentum(), p.position().threevec(), WhichDecaymodes::All));
-    actions.emplace_back(std::move(act));
   }
   return actions;
 }

@@ -47,7 +47,7 @@ to nomenclature and whatever else you might notice.
 
 ## Testing
 
-### Running tests
+### Unit tests
 
 To run the various unit tests, use the following:
 
@@ -68,6 +68,17 @@ If a test crashes, there might be some leftover in the `test_output` folder,
 causing the test to always fail when run again. To fix this problem, just remove
 the folder.
 
+### Functional tests
+
+The functional tests require Python3.3 to create a virtual environment where modules can be imported. They are disabled by default, but can be enabled before building the project with
+
+    cmake -DENABLE_FUNCTIONAL_TESTS=ON ..
+
+They can be run collectively with
+
+    ctest -R functional
+
+Notice that there is no executable created for them, and so they cannot be run by calling `make` as for the unit tests.
 
 ### Runtime memory checking with valgrind
 
@@ -555,21 +566,24 @@ following way:
 
 * If the key has not a C++ built-in type, add a new `enum class` to
   _forwarddeclarations.h_ for the new key type.
-* Add `Configuration::Value` cast operator overload.
+* If the key requires a new `enum`, add `Configuration::Value` cast operator overload.
 * Declare the new key in the _input_keys.h_ file according to the
   instructions you find in the documentation of the `InputKeys` class.
   Doing so you will also add the needed description for the User Guide.
+* If the key requires a new `enum`, add a `to_string(...)` overload to convert the `enum` to a `std::string`.
 
 
 ### Code formatting with used utilities
 
 All C++ code has to be formatted by running [`clang-format`](https://releases.llvm.org/download.html),
 (version `13.0.0`) while CMake code requires [`cmake-format`](https://github.com/cheshirekow/cmake_format)
-(version `0.6.13`) to be run. These two programs automatically format the code in SMASH correctly.
+(version `0.6.13`) to be run. Python scripts are formatted using [`autopep8`](https://github.com/hhatto/autopep8)
+(version `2.3.1`), instead. These programs automatically format the code in SMASH correctly.
 Use the helper script in SMASH's _**bin**_ directory to format the source code via
 
     ./codebase-format-helper.bash C++ -p
     ./codebase-format-helper.bash CMake -p
+    ./codebase-format-helper.bash Python -p
 
 or by simply using
 
@@ -608,6 +622,14 @@ commands are installed and found, namely version 1.6.0 for `cpplint` and version
 ### Floating-point precision
 
 All floating point numbers are represented using doubles.
+
+
+### Not-a-number
+
+There is a built-in type `smash::smash_NaN` which represents a templated [STL
+`quiet_NaN()`](https://en.cppreference.com/w/cpp/types/numeric_limits/quiet_NaN)
+that should be used in the codebase instead of the STL low-level one.
+
 
 ### Guideline to include header files
 

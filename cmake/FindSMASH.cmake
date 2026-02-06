@@ -1,11 +1,11 @@
 ########################################################
 #
-#    Copyright (c) 2018-2020,2022-2023
+#    Copyright (c) 2018-2020,2022-2025
 #      SMASH Team
 #
 #    BSD 3-clause license
 #
-#########################################################
+########################################################
 
 # cmake-format: off
 #===============================================================================
@@ -86,7 +86,7 @@ endif()
 
 find_package(GSL 2.0 REQUIRED)
 find_package(Eigen3 3.0 REQUIRED)
-find_package(Pythia 8.310 EXACT REQUIRED)
+find_package(Pythia 8.316 EXACT REQUIRED)
 set(SMASH_INCLUDE_DIR ${GSL_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIR} ${Pythia_INCLUDE_DIRS})
 set(SMASH_LIBRARIES ${GSL_LIBRARY} ${GSL_CBLAS_LIBRARY} ${Pythia_LIBRARIES} ${CMAKE_DL_LIBS})
 
@@ -150,14 +150,14 @@ else() # Use SMASH_DIR and SMASH_BUILD_DIR --> DEPRECATED!
          SMASH_INCLUDE_DIR
          $ENV{SMASH_DIR}/3rdparty/Cuba-4.2.2
          $ENV{SMASH_DIR}/3rdparty/einhard
-         $ENV{SMASH_DIR}/3rdparty/yaml-cpp-0.7.0/include
+         $ENV{SMASH_DIR}/3rdparty/yaml-cpp-0.8.0/include
          $ENV{SMASH_DIR}/src/include
          ${SMASH_BUILD_DIR}/src/include # For the decaymodes and particles header files
     )
     set(SMASH_INPUT_FILES_DIR "$ENV{SMASH_DIR}/input")
     find_library(SMASH_LIBRARY NAMES smash PATHS ${SMASH_BUILD_DIR}/src)
     find_library(EINHARD_LIBRARY NAMES einhard PATHS ${SMASH_BUILD_DIR}/3rdparty/einhard)
-    find_library(CPPYAML_LIBRARY NAMES yaml-cpp PATHS ${SMASH_BUILD_DIR}/3rdparty/yaml-cpp-0.7.0)
+    find_library(CPPYAML_LIBRARY NAMES yaml-cpp PATHS ${SMASH_BUILD_DIR}/3rdparty/yaml-cpp-0.8.0)
     find_library(INTEGRATION_LIBRARY NAMES cuhre
                  PATHS ${SMASH_BUILD_DIR}/3rdparty/Cuba-4.2.2/src/cuhre)
     set(smash_found_version "NOT-FOUND")
