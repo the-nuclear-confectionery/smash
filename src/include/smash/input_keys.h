@@ -4792,11 +4792,11 @@ struct InputKeys {
   /**
    * \see_key{key_ML_optional_quantities_}
    */
-  inline static const Key<std::vector<std::string>>
-      modi_list_optionalQuantities{
-          InputSections::m_list + "Optional_Quantities",
-          std::vector<std::string>{"ID", "charge"},
-          {"3.3"}};
+   inline static const Key<std::vector<std::string>>
+   modi_list_optionalQuantities{
+       InputSections::m_list + "Optional_Quantities",
+       std::vector<std::string>{},   // ← default = nothing
+       {"3.3"}};
 
   /*!\Userguide
    * \page doxypage_input_conf_modi_listbox

@@ -290,6 +290,7 @@ void ListModus::read_particles_from_next_event_(Particles &particles) {
   for (const Line &line : event_content) {
     std::istringstream lineinput(line.text);
     double t, x, y, z, mass, E, px, py, pz;
+    int id;
     std::string pdg_string;
     lineinput >> id >> t >> x >> y >> z >> mass >> E >> px >> py >> pz ;
     pdg_string = std::to_string(id);
@@ -298,9 +299,7 @@ void ListModus::read_particles_from_next_event_(Particles &particles) {
       std::string opt{};
       lineinput >> opt;
       optional_quantities[i] = std::move(opt);
-    }    
-    
-
+    }
     if (lineinput.fail()) {
       throw LoadFailure(
           build_error_string("While loading external particle lists data:\n"
@@ -311,7 +310,7 @@ void ListModus::read_particles_from_next_event_(Particles &particles) {
     PdgCode pdgcode(pdg_string);
     logg[LList].debug("Particle ", pdgcode, " (x,y,z)= (", x, ", ", y, ", ", z,
                       ")");
-    charge = pdgcode.charge();
+
     try_create_particle(particles, pdgcode, t, x, y, z, mass, E, px, py, pz,
                         optional_quantities);
   }
